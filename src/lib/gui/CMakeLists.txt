@@ -124,3 +124,12 @@ target_link_libraries(${target}
     net
     Qt6::Widgets
 )
+
+# The settings dialog can scan for Bluetooth devices, so it needs the Qt
+# Bluetooth module. Both the module and the DESKFLOW_BLUETOOTH macro that guards
+# the discovery code are PUBLIC, the same way the transport declares them, so
+# every consumer of this library sees one consistent class layout.
+if(DESKFLOW_ENABLE_BLUETOOTH)
+  target_link_libraries(${target} PUBLIC Qt6::Bluetooth)
+  target_compile_definitions(${target} PUBLIC DESKFLOW_BLUETOOTH=1)
+endif()

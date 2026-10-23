@@ -1204,8 +1204,36 @@ L&apos;abilitazione di questa impostazione disabiliterà l&apos;interfaccia graf
         <translation>Output di debug dettagliato</translation>
     </message>
     <message>
+        <source>Select the computer you want to control this one.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This computer waits for the other one to connect. Its Bluetooth name is %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No devices found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Scan failed, check that Bluetooth is turned on.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Searching…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>TLS Certificate Regenerated</source>
         <translation>Certificato TLS rigenerato</translation>
+    </message>
+    <message>
+        <source>This build has no Bluetooth support.</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>TLS certificate regenerated successfully.</source>
@@ -1296,35 +1324,11 @@ L&apos;abilitazione di questa impostazione disabiliterà l&apos;interfaccia graf
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Use Bluetooth transport (experimental)</source>
+        <source>Use Bluetooth</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Bluetooth peer</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Address or advertised name of the Bluetooth peer to connect to</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Advertised name</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Computer name</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Link backend</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Qt radio</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Loopback test</source>
+        <source>Scan</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

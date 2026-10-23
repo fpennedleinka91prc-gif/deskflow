@@ -1178,6 +1178,10 @@ Enabling this setting will disable the server config GUI.</source>
         <translation>Язык</translation>
     </message>
     <message>
+        <source>This build has no Bluetooth support.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>TLS Certificate Regenerated</source>
         <translation>Сертификат TLS перевыпущен</translation>
     </message>
@@ -1224,6 +1228,30 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Verbose debug output</source>
         <translation>Подробный вывод отладки</translation>
+    </message>
+    <message>
+        <source>Select the computer you want to control this one.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This computer waits for the other one to connect. Its Bluetooth name is %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No devices found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Scan failed, check that Bluetooth is turned on.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Searching…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Automatic</source>
@@ -1294,35 +1322,11 @@ Enabling this setting will disable the server config GUI.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Use Bluetooth transport (experimental)</source>
+        <source>Use Bluetooth</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Bluetooth peer</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Address or advertised name of the Bluetooth peer to connect to</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Advertised name</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Computer name</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Link backend</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Qt radio</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Loopback test</source>
+        <source>Scan</source>
         <translation type="unfinished"></translation>
     </message>
 </context>

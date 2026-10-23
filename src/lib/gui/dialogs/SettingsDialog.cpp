@@ -20,9 +20,23 @@
 #include <QComboBox>
 #include <QDir>
 #include <QFileDialog>
+#include <QHostInfo>
+#include <QListWidget>
+#include <QListWidgetItem>
 #include <QMessageBox>
+#include <QPalette>
+
+#ifdef DESKFLOW_BLUETOOTH
+#include <QBluetoothDeviceDiscoveryAgent>
+#include <QBluetoothDeviceInfo>
+#endif
 
 using namespace deskflow::gui;
+
+#ifdef DESKFLOW_BLUETOOTH
+// end a scan on its own so the dialog never stays stuck on "Searching…"
+constexpr int kBluetoothScanTimeoutMs = 10000;
+#endif
 
 SettingsDialog::SettingsDialog(QWidget *parent, const ServerConfig &serverConfig)
     : QDialog(parent),
@@ -39,11 +53,21 @@ SettingsDialog::SettingsDialog(QWidget *parent, const ServerConfig &serverConfig
   ui->lineCommandEnter->setEnabled(false);
   ui->lineCommandExit->setEnabled(false);
 
-  // the Bluetooth backend combo stores the settings value as item data, so the
-  // "Automatic" entry carries an empty value and lets the transport decide
-  ui->comboBtBackend->setItemData(0, QString(), Qt::UserRole);
-  ui->comboBtBackend->setItemData(1, QStringLiteral("qt"), Qt::UserRole);
-  ui->comboBtBackend->setItemData(2, QStringLiteral("loopback"), Qt::UserRole);
+  // the Bluetooth group is a scan and pick list: the hint is meant to read as
+  // secondary text, so it gets a slightly smaller font and a greyed colour
+  // (taken from the disabled palette so it also works in dark mode)
+  auto hintFont = ui->lblBtHint->font();
+  if (hintFont.pointSizeF() > 0)
+    hintFont.setPointSizeF(hintFont.pointSizeF() * 0.9);
+  ui->lblBtHint->setFont(hintFont);
+  auto hintPalette = ui->lblBtHint->palette();
+  hintPalette.setColor(QPalette::WindowText, hintPalette.color(QPalette::Disabled, QPalette::WindowText));
+  ui->lblBtHint->setPalette(hintPalette);
+
+#ifndef DESKFLOW_BLUETOOTH
+  ui->btnBtScan->setEnabled(false);
+  ui->lblBtStatus->setText(tr("This build has no Bluetooth support."));
+#endif
 
   // set up the language combo
   I18N::reDetectLanguages();
@@ -97,6 +121,8 @@ void SettingsDialog::changeEvent(QEvent *e)
   if (e->type() == QEvent::LanguageChange) {
     ui->retranslateUi(this);
     updateText();
+    // the Bluetooth hint is set from code, so retranslate it here as well
+    updateBluetoothHint();
   }
 }
 
@@ -150,9 +176,8 @@ void SettingsDialog::initConnections() const
   connect(ui->lineCommandExit, &QLineEdit::textChanged, this, &SettingsDialog::setButtonBoxEnabledButtons);
   connect(ui->cbBluetooth, &QCheckBox::toggled, this, &SettingsDialog::updateBluetoothControls);
   connect(ui->cbBluetooth, &QCheckBox::toggled, this, &SettingsDialog::setButtonBoxEnabledButtons);
-  connect(ui->lineBtPeer, &QLineEdit::textChanged, this, &SettingsDialog::setButtonBoxEnabledButtons);
-  connect(ui->lineBtName, &QLineEdit::textChanged, this, &SettingsDialog::setButtonBoxEnabledButtons);
-  connect(ui->comboBtBackend, &QComboBox::currentIndexChanged, this, &SettingsDialog::setButtonBoxEnabledButtons);
+  connect(ui->btnBtScan, &QPushButton::clicked, this, &SettingsDialog::startBluetoothScan);
+  connect(ui->listBtDevices, &QListWidget::currentItemChanged, this, &SettingsDialog::onBluetoothDeviceSelected);
   connect(Settings::instance(), &Settings::settingsWritableChanged, this, &SettingsDialog::updateControls);
 }
 
@@ -253,16 +278,9 @@ void SettingsDialog::accept()
   Settings::setValue(Settings::Core::EnableExitCommand, ui->cbRunExitCommand->isChecked());
   Settings::setValue(Settings::Core::ComputerEnterCommand, ui->lineCommandEnter->text());
   Settings::setValue(Settings::Core::ComputerExitCommand, ui->lineCommandExit->text());
+  // the Bluetooth peer is written as soon as a device is picked, and the
+  // backend is always automatic, so only the on/off flag is left to save
   Settings::setValue(Settings::Bluetooth::Enabled, ui->cbBluetooth->isChecked());
-  Settings::setValue(Settings::Bluetooth::Peer, ui->lineBtPeer->text());
-  Settings::setValue(Settings::Bluetooth::Name, ui->lineBtName->text());
-
-  // an empty backend means "automatic", so drop the key instead of storing an
-  // empty value that would otherwise look like an explicit choice
-  const auto bluetoothBackend = ui->comboBtBackend->currentData().toString();
-  Settings::setValue(
-      Settings::Bluetooth::Backend, bluetoothBackend.isEmpty() ? QVariant() : QVariant(bluetoothBackend)
-  );
 
   Settings::ProcessMode mode;
   if (ui->groupService->isChecked())
@@ -324,11 +342,18 @@ void SettingsDialog::loadFromConfig()
   }
 
   ui->cbBluetooth->setChecked(Settings::value(Settings::Bluetooth::Enabled).toBool());
-  ui->lineBtPeer->setText(Settings::value(Settings::Bluetooth::Peer).toString());
-  ui->lineBtName->setText(Settings::value(Settings::Bluetooth::Name).toString());
-  const auto bluetoothBackendIndex =
-      ui->comboBtBackend->findData(Settings::value(Settings::Bluetooth::Backend).toString(), Qt::UserRole);
-  ui->comboBtBackend->setCurrentIndex(bluetoothBackendIndex > 0 ? bluetoothBackendIndex : 0);
+
+  // the peer is persisted the moment a device is picked, so show it back as the
+  // selected row instead of keeping a separate field for it
+  ui->listBtDevices->clear();
+  ui->lblBtStatus->clear();
+  const auto bluetoothPeer = Settings::value(Settings::Bluetooth::Peer).toString();
+  if (!bluetoothPeer.isEmpty()) {
+    auto *item = new QListWidgetItem(bluetoothPeer, ui->listBtDevices);
+    item->setData(Qt::UserRole, bluetoothPeer);
+    item->setData(Qt::UserRole + 1, QString());
+    ui->listBtDevices->setCurrentItem(item);
+  }
 
   qDebug() << "load from config done";
 
@@ -371,21 +396,136 @@ void SettingsDialog::updateBluetoothControls()
 {
   const auto writable = Settings::isWritable();
   const auto enabled = writable && ui->cbBluetooth->isChecked();
-
-  // the client dials the peer and the server advertises its name, so only the
-  // field that the current core mode uses is editable. before a mode has been
-  // picked both stay available so the dialog is usable on a fresh profile.
   const auto coreMode = Settings::value(Settings::Core::CoreMode).value<Settings::CoreMode>();
-  const auto clientMode = coreMode == Settings::CoreMode::Client;
   const auto serverMode = coreMode == Settings::CoreMode::Server;
 
   ui->cbBluetooth->setEnabled(writable);
-  ui->lblBtPeer->setEnabled(enabled && (clientMode || !serverMode));
-  ui->lineBtPeer->setEnabled(enabled && (clientMode || !serverMode));
-  ui->lblBtName->setEnabled(enabled && (serverMode || !clientMode));
-  ui->lineBtName->setEnabled(enabled && (serverMode || !clientMode));
-  ui->lblBtBackend->setEnabled(enabled);
-  ui->comboBtBackend->setEnabled(enabled);
+
+  // the server only advertises and never picks a device, so its list is
+  // informational and the scan button stays off
+  ui->btnBtScan->setEnabled(enabled && !serverMode);
+  ui->listBtDevices->setEnabled(enabled && !serverMode);
+  ui->lblBtStatus->setEnabled(enabled);
+
+  // switching the transport off cancels a scan that is still running
+  if (!enabled)
+    stopBluetoothScan();
+
+  updateBluetoothHint();
+}
+
+void SettingsDialog::updateBluetoothHint()
+{
+  const auto coreMode = Settings::value(Settings::Core::CoreMode).value<Settings::CoreMode>();
+  if (coreMode != Settings::CoreMode::Server) {
+    ui->lblBtHint->setText(tr("Select the computer you want to control this one."));
+    return;
+  }
+
+  // the server advertises this name and falls back to the host name when the
+  // key is empty, so show exactly what the other side is going to see
+  auto localName = Settings::value(Settings::Bluetooth::Name).toString();
+  if (localName.isEmpty())
+    localName = QHostInfo::localHostName();
+
+  ui->lblBtHint->setText(
+      tr("This computer waits for the other one to connect. Its Bluetooth name is %1.").arg(localName)
+  );
+}
+
+void SettingsDialog::startBluetoothScan()
+{
+#ifdef DESKFLOW_BLUETOOTH
+  // the scan is only there to pick the peer of the client, so it needs the
+  // transport to be on
+  if (!ui->cbBluetooth->isChecked())
+    return;
+
+  if (m_btAgent == nullptr) {
+    m_btAgent = new QBluetoothDeviceDiscoveryAgent(this);
+    m_btAgent->setLowEnergyDiscoveryTimeout(kBluetoothScanTimeoutMs);
+
+    connect(
+        m_btAgent, &QBluetoothDeviceDiscoveryAgent::deviceDiscovered, this,
+        [this](const QBluetoothDeviceInfo &info) { addBluetoothDevice(info.name(), info.address().toString()); }
+    );
+    connect(m_btAgent, &QBluetoothDeviceDiscoveryAgent::finished, this, [this] {
+      if (ui->listBtDevices->count() == 0)
+        ui->lblBtStatus->setText(tr("No devices found"));
+      else
+        ui->lblBtStatus->clear();
+      updateBluetoothControls();
+    });
+    connect(m_btAgent, &QBluetoothDeviceDiscoveryAgent::canceled, this, [this] {
+      // a scan that we stopped ourselves: the list and the status stay as they are
+      updateBluetoothControls();
+    });
+    connect(
+        m_btAgent, &QBluetoothDeviceDiscoveryAgent::errorOccurred, this, [this](QBluetoothDeviceDiscoveryAgent::Error) {
+          ui->lblBtStatus->setText(tr("Scan failed, check that Bluetooth is turned on."));
+          updateBluetoothControls();
+        }
+    );
+  }
+
+  if (m_btAgent->isActive())
+    m_btAgent->stop();
+
+  ui->listBtDevices->clear();
+  ui->lblBtStatus->setText(tr("Searching…"));
+  ui->btnBtScan->setEnabled(false);
+  m_btAgent->start(QBluetoothDeviceDiscoveryAgent::LowEnergyMethod);
+#else
+  ui->lblBtStatus->setText(tr("This build has no Bluetooth support."));
+#endif
+}
+
+void SettingsDialog::stopBluetoothScan()
+{
+#ifdef DESKFLOW_BLUETOOTH
+  if (m_btAgent != nullptr && m_btAgent->isActive())
+    m_btAgent->stop();
+#endif
+}
+
+void SettingsDialog::addBluetoothDevice(const QString &name, const QString &address)
+{
+  if (address.isEmpty())
+    return;
+
+  // the same device can be reported more than once while a scan runs, and the
+  // address is what gets persisted, so it is the identity to de-duplicate on
+  for (int i = 0; i < ui->listBtDevices->count(); i++) {
+    if (ui->listBtDevices->item(i)->data(Qt::UserRole).toString() == address)
+      return;
+  }
+
+  const auto label = name.isEmpty() ? address : QStringLiteral("%1 (%2)").arg(name, address);
+  auto *item = new QListWidgetItem(label, ui->listBtDevices);
+  item->setData(Qt::UserRole, address);
+  item->setData(Qt::UserRole + 1, name);
+
+  // keep the device that is already configured selected so the current pairing
+  // stays visible; the selection handler skips writing it again
+  if (address == Settings::value(Settings::Bluetooth::Peer).toString())
+    ui->listBtDevices->setCurrentItem(item);
+}
+
+void SettingsDialog::onBluetoothDeviceSelected()
+{
+  const auto *item = ui->listBtDevices->currentItem();
+  if (item == nullptr)
+    return;
+
+  const auto address = item->data(Qt::UserRole).toString();
+  if (address.isEmpty() || address == Settings::value(Settings::Bluetooth::Peer).toString())
+    return;
+
+  // picking a device is the whole configuration: the client dials this address,
+  // so store it right away and leave the advertised name alone
+  Settings::setValue(Settings::Bluetooth::Peer, address);
+  ui->lblBtStatus->setText(tr("Selected %1").arg(item->text()));
+  setButtonBoxEnabledButtons();
 }
 
 bool SettingsDialog::isClientMode() const
@@ -495,9 +635,6 @@ bool SettingsDialog::isModified() const
       (ui->lineCommandEnter->text() != Settings::value(Settings::Core::ComputerEnterCommand).toString()) ||
       (ui->lineCommandExit->text() != Settings::value(Settings::Core::ComputerExitCommand).toString()) ||
       (ui->cbBluetooth->isChecked() != Settings::value(Settings::Bluetooth::Enabled).toBool()) ||
-      (ui->lineBtPeer->text() != Settings::value(Settings::Bluetooth::Peer).toString()) ||
-      (ui->lineBtName->text() != Settings::value(Settings::Bluetooth::Name).toString()) ||
-      (ui->comboBtBackend->currentData().toString() != Settings::value(Settings::Bluetooth::Backend).toString()) ||
       (I18N::nativeTo639Name(ui->comboLanguage->currentText()) != Settings::value(Settings::Core::Language).toString());
 
   if (!ignoreInterface)
@@ -535,9 +672,6 @@ bool SettingsDialog::isDefault() const
       (ui->cbRunEnterCommand->isChecked() == Settings::defaultValue(Settings::Core::EnableEnterCommand).toBool()) &&
       (ui->cbRunExitCommand->isChecked() == Settings::defaultValue(Settings::Core::EnableExitCommand).toBool()) &&
       (ui->cbBluetooth->isChecked() == Settings::defaultValue(Settings::Bluetooth::Enabled).toBool()) &&
-      (ui->lineBtPeer->text() == Settings::defaultValue(Settings::Bluetooth::Peer).toString()) &&
-      (ui->lineBtName->text() == Settings::defaultValue(Settings::Bluetooth::Name).toString()) &&
-      (ui->comboBtBackend->currentIndex() == 0) &&
       (ui->comboLanguage->currentText() == "English")
   );
 }
@@ -584,9 +718,12 @@ void SettingsDialog::resetToDefault()
   ui->comboInterface->setCurrentIndex(0);
 
   ui->cbBluetooth->setChecked(Settings::defaultValue(Settings::Bluetooth::Enabled).toBool());
-  ui->lineBtPeer->setText(Settings::defaultValue(Settings::Bluetooth::Peer).toString());
-  ui->lineBtName->setText(Settings::defaultValue(Settings::Bluetooth::Name).toString());
-  ui->comboBtBackend->setCurrentIndex(0);
+
+  // there is no peer widget any more, so restoring the defaults has to drop the
+  // stored peer instead of clearing a field
+  Settings::setValue(Settings::Bluetooth::Peer, QVariant());
+  ui->listBtDevices->clear();
+  ui->lblBtStatus->clear();
 
   qDebug() << "reset to default values";
   updateControls();

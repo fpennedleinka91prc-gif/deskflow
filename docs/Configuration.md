@@ -275,7 +275,7 @@ While the transport is enabled the server ignores `core/interface` and `core/por
 
 ## Settings dialog
 
-The same options are available in the GUI, in the *Preferences* dialog on the *Network* tab, in the **Bluetooth transport** group: **Use Bluetooth transport (experimental)** is `bluetooth/enabled`, **Bluetooth peer** is `bluetooth/peer`, **Advertised name** is `bluetooth/name` and **Link backend** is `bluetooth/backend` (*Automatic*, *Qt radio* or *Loopback test*; *Automatic* leaves the key unset). The peer field is only editable in client mode and the advertised name only in server mode, since each side only uses one of them (with no mode chosen yet, both are editable). The values are written when the dialog is accepted and are picked up the next time the core starts.
+The same options are available in the GUI, in the *Preferences* dialog on the *Network* tab, in the **Bluetooth transport** group: **Use Bluetooth transport (experimental)** is `bluetooth/enabled`. Turning it on is the whole configuration: **Scan** lists the Bluetooth devices the radio can see, and picking one from the list writes its address to `bluetooth/peer` right away, so there is nothing else to type. The scan only runs in client mode; a server does not pick a peer, it advertises `bluetooth/name` (the computer name when the key is empty) and waits, which the hint under the list spells out. `bluetooth/name` and `bluetooth/backend` are not editable in the dialog any more: the name defaults to the computer name and the backend picks itself.
 
 ## Permissions
 

@@ -13,6 +13,10 @@
 
 class SettingsDialogButtonBox;
 
+#ifdef DESKFLOW_BLUETOOTH
+class QBluetoothDeviceDiscoveryAgent;
+#endif
+
 namespace Ui {
 class SettingsDialog;
 }
@@ -43,6 +47,11 @@ private:
   void updateTlsControls();
   void updateTlsControlsEnabled();
   void updateBluetoothControls();
+  void updateBluetoothHint();
+  void startBluetoothScan();
+  void stopBluetoothScan();
+  void addBluetoothDevice(const QString &name, const QString &address);
+  void onBluetoothDeviceSelected();
   void resetAllSettings();
   void updateText();
 
@@ -88,4 +97,9 @@ private:
   std::unique_ptr<Ui::SettingsDialog> ui;
   const ServerConfig &m_serverConfig;
   SettingsDialogButtonBox *m_buttonBox = nullptr;
+
+#ifdef DESKFLOW_BLUETOOTH
+  //! Device discovery for the "pick a device" list; created on the first scan.
+  QBluetoothDeviceDiscoveryAgent *m_btAgent = nullptr;
+#endif
 };

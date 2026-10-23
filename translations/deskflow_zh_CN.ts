@@ -1182,6 +1182,10 @@ Enabling this setting will disable the server config GUI.</source>
         <translation>语言</translation>
     </message>
     <message>
+        <source>This build has no Bluetooth support.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>TLS Certificate Regenerated</source>
         <translation>TLS 证书已重新生成</translation>
     </message>
@@ -1228,6 +1232,30 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Verbose debug output</source>
         <translation>详细调试输出</translation>
+    </message>
+    <message>
+        <source>Select the computer you want to control this one.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>This computer waits for the other one to connect. Its Bluetooth name is %1.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>No devices found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Scan failed, check that Bluetooth is turned on.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Searching…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Selected %1</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Automatic</source>
@@ -1299,35 +1327,43 @@ Enabling this setting will disable the server config GUI.</source>
     </message>
     <message>
         <source>Use Bluetooth transport (experimental)</source>
-        <translation>使用蓝牙传输（实验性）</translation>
+        <translation type="vanished">使用蓝牙传输（实验性）</translation>
     </message>
     <message>
         <source>Bluetooth peer</source>
-        <translation>蓝牙对端</translation>
+        <translation type="vanished">蓝牙对端</translation>
     </message>
     <message>
         <source>Address or advertised name of the Bluetooth peer to connect to</source>
-        <translation>要连接的蓝牙对端的地址或广播名称</translation>
+        <translation type="vanished">要连接的蓝牙对端的地址或广播名称</translation>
     </message>
     <message>
         <source>Advertised name</source>
-        <translation>广播名称</translation>
+        <translation type="vanished">广播名称</translation>
     </message>
     <message>
         <source>Computer name</source>
-        <translation>计算机名</translation>
+        <translation type="vanished">计算机名</translation>
     </message>
     <message>
         <source>Link backend</source>
-        <translation>链路后端</translation>
+        <translation type="vanished">链路后端</translation>
     </message>
     <message>
         <source>Qt radio</source>
-        <translation>Qt 蓝牙</translation>
+        <translation type="vanished">Qt 蓝牙</translation>
     </message>
     <message>
         <source>Loopback test</source>
-        <translation>环回测试</translation>
+        <translation type="vanished">环回测试</translation>
+    </message>
+    <message>
+        <source>Use Bluetooth</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Scan</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

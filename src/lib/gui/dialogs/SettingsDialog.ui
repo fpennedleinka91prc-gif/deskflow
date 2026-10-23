@@ -581,67 +581,62 @@
           <item>
            <widget class="QCheckBox" name="cbBluetooth">
             <property name="text">
-             <string>Use Bluetooth transport (experimental)</string>
+             <string>Use Bluetooth</string>
             </property>
            </widget>
           </item>
           <item>
-           <layout class="QFormLayout" name="formLayoutBluetooth">
-            <item row="0" column="0">
-             <widget class="QLabel" name="lblBtPeer">
+           <layout class="QHBoxLayout" name="horizontalLayoutBluetooth">
+            <item>
+             <widget class="QPushButton" name="btnBtScan">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Maximum" vsizetype="Fixed">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
+              </property>
               <property name="text">
-               <string>Bluetooth peer</string>
+               <string>Scan</string>
               </property>
              </widget>
             </item>
-            <item row="0" column="1">
-             <widget class="QLineEdit" name="lineBtPeer">
-              <property name="toolTip">
-               <string>Address or advertised name of the Bluetooth peer to connect to</string>
+            <item>
+             <widget class="QLabel" name="lblBtStatus">
+              <property name="sizePolicy">
+               <sizepolicy hsizetype="Expanding" vsizetype="Preferred">
+                <horstretch>0</horstretch>
+                <verstretch>0</verstretch>
+               </sizepolicy>
               </property>
-             </widget>
-            </item>
-            <item row="1" column="0">
-             <widget class="QLabel" name="lblBtName">
+              <property name="wordWrap">
+               <bool>true</bool>
+              </property>
               <property name="text">
-               <string>Advertised name</string>
+               <string notr="true"/>
               </property>
-             </widget>
-            </item>
-            <item row="1" column="1">
-             <widget class="QLineEdit" name="lineBtName">
-              <property name="placeholderText">
-               <string>Computer name</string>
-              </property>
-             </widget>
-            </item>
-            <item row="2" column="0">
-             <widget class="QLabel" name="lblBtBackend">
-              <property name="text">
-               <string>Link backend</string>
-              </property>
-             </widget>
-            </item>
-            <item row="2" column="1">
-             <widget class="QComboBox" name="comboBtBackend">
-              <item>
-               <property name="text">
-                <string>Automatic</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>Qt radio</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>Loopback test</string>
-               </property>
-              </item>
              </widget>
             </item>
            </layout>
+          </item>
+          <item>
+           <widget class="QListWidget" name="listBtDevices">
+            <property name="minimumSize">
+             <size>
+              <width>0</width>
+              <height>96</height>
+             </size>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <widget class="QLabel" name="lblBtHint">
+            <property name="wordWrap">
+             <bool>true</bool>
+            </property>
+            <property name="text">
+             <string notr="true"/>
+            </property>
+           </widget>
           </item>
          </layout>
         </widget>
