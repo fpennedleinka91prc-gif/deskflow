@@ -1,0 +1,94 @@
+# Builds a Windows x64 installer for the Bluetooth-enabled Deskflow fork.
+# Manual/small-scope workflow: only Windows x64, Release, packaged output.
+
+name: Bluetooth Windows build
+
+on:
+  push:
+    branches: [bluetooth-transport]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  workflow_dispatch:
+
+env:
+  DESKFLOW_VERSION_LABEL: "bluetooth"
+
+jobs:
+  windows-x64:
+    name: windows-x64 (Bluetooth)
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSVC
+        uses: TheMrMilchmann/setup-msvc-dev@v4
+        with:
+          arch: amd64
+          spectre: true
+
+      - name: Install Qt (with Bluetooth module)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.12"
+          arch: win64_msvc2022_64
+          modules: qtconnectivity
+          cache: true
+
+      - name: Build and cache vcpkg dependencies
+        id: vcpkg
+        uses: johnwason/vcpkg-action@v8
+        with:
+          pkgs: openssl
+          extra-args: --classic --host-triplet=x64-windows-release
+          triplet: x64-windows-release
+          token: ${{ github.token }}
+          revision: master
+
+      - name: Install WiX toolset
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 5.0.2
+          wix extension add --global WixToolset.UI.wixext/5.0.2
+          wix extension add --global WixToolset.Util.wixext/5.0.2
+          wix extension add --global WixToolset.Firewall.wixext/5.0.2
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -Bbuild -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DSKIP_BUILD_TESTS=ON \
+            -DDESKFLOW_ENABLE_BLUETOOTH=ON \
+            -DPACKAGE_VERSION_LABEL="${{ env.DESKFLOW_VERSION_LABEL }}" \
+            ${{ steps.vcpkg.outputs.vcpkg-cmake-config }}
+
+      - name: Check Bluetooth support was enabled
+        shell: bash
+        run: |
+          grep -i "DESKFLOW_ENABLE_BLUETOOTH" build/CMakeCache.txt
+
+      - name: Build and package
+        shell: bash
+        run: cmake --build build --config Release -j8 --target package
+
+      - name: Collect installers
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/*.msi dist/ 2>/dev/null || true
+          cp build/*.zip dist/ 2>/dev/null || true
+          ls -la dist
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: deskflow-windows-x64-bluetooth
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
