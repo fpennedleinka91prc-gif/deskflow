@@ -42,6 +42,7 @@ private:
   bool isClientMode() const;
   void updateTlsControls();
   void updateTlsControlsEnabled();
+  void updateBluetoothControls();
   void resetAllSettings();
   void updateText();
 

@@ -40,13 +40,17 @@ namespace deskflow {
 class ServerArgs;
 }
 
+namespace deskflow::net::bt {
+class BtTransport;
+}
+
 class ServerApp : public App
 {
   using ServerConfig = deskflow::server::Config;
 
 public:
   explicit ServerApp(IEventQueue *events, const QString &processName = QString());
-  ~ServerApp() override = default;
+  ~ServerApp() override;
 
   //
   // IApp overrides
@@ -116,4 +120,10 @@ private:
   NetworkAddress *m_deskflowAddress = nullptr;
   std::string m_name;
   std::shared_ptr<deskflow::server::Config> m_config;
+  //! Bluetooth transport, started by parseArgs() when Bluetooth is enabled.
+  /*!
+  Outlives stopServer()/startServer() so a suspend/resume cycle keeps the
+  advertised peripheral alive.
+  */
+  std::unique_ptr<deskflow::net::bt::BtTransport> m_btTransport;
 };

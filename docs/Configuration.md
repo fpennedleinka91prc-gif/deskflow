@@ -44,6 +44,21 @@ Option-value pairs are only written if the value is not the default value.
 option=value
 ```
 
+### Bluetooth
+
+This section contains options for the experimental Bluetooth transport, it will begin with `[bluetooth]`
+
+See [Bluetooth transport (experimental)](#bluetooth-transport-experimental) for what the transport does and how to try it.
+
+| Option         | Valid Values      | Description |
+|:---------------|:-----------------:|:------------|
+| enabled        | `true` or `false` | Tunnel the Deskflow protocol over a Bluetooth link instead of a TCP connection [default: false] |
+| peer           | `address` or `name` | Bluetooth peer the client connects to: a platform address (macOS: the peripheral UUID) or, when no address is set, the name the server advertises |
+| name           | string            | Name the server advertises over Bluetooth [default: the computer name] |
+| backend        | `qt` or `loopback` | Link backend. `qt` uses the platform Bluetooth stack, `loopback` is a radio free test backend. The `DESKFLOW_BT_BACKEND` environment variable takes precedence [default: auto] |
+| chunkSize      | int               | Requested payload bytes per Bluetooth chunk; `0` lets the backend pick a size from the negotiated MTU [default: 0] |
+| initialCredits | int               | Number of chunks a peer may send before it has to wait for a flow control credit [default: 32] |
+
 ### Client
 
 This section contains options used when in client mode. 
@@ -221,6 +236,77 @@ screens\9\name=abyss.lan
 screens\size=15
 ```
 
+
+# Bluetooth transport (experimental)
+
+Deskflow can carry its protocol over a Bluetooth Low Energy link instead of a TCP connection. The link is treated as a plain byte pipe: the transport runs a small relay in the same process that exposes a loopback TCP endpoint on `127.0.0.1`, and the apps talk to that endpoint exactly as they would to a remote peer. Nothing above the socket layer changes, so screen edges, clipboard, hotkeys, drag and drop and TLS behave the same as they do over the network.
+
+The roles are fixed by the Deskflow mode:
+
+* the **server** is the Bluetooth *peripheral*: it advertises the Deskflow service and waits for a peer to connect,
+* the **client** is the Bluetooth *central*: it scans for the server and connects to it.
+
+The GATT service UUID is `3f2a7c1e-9b64-4d58-8a11-6c0d5e7b9f20`, with an `Rx` characteristic (`3f2a7c1e-9b64-4d58-8a11-6c0d5e7b9f21`, written by the peer) and a `Tx` characteristic (`3f2a7c1e-9b64-4d58-8a11-6c0d5e7b9f22`, notifications). Payloads are split into chunks and flow controlled with credits, see `bluetooth/chunkSize` and `bluetooth/initialCredits` above. Only one peer is served at a time.
+
+## Command line options
+
+| Option         | Argument          | Description |
+|:---------------|:-----------------:|:------------|
+| `--bluetooth`  |                   | Enable the Bluetooth transport. The server stops listening on the network and only accepts the loopback relay; the client ignores `client/remoteHost` |
+| `--bt-peer`    | `address` or `name` | Bluetooth peer the client connects to. An address is used as is; a name is matched against what the server advertises |
+| `--bt-name`    | `local name`      | Name the server advertises over Bluetooth [default: the computer name] |
+| `--bt-backend` | `qt` or `loopback` | Link backend. `qt` uses the platform Bluetooth stack, `loopback` is a radio free test backend |
+
+For example, on the machine that owns the keyboard and mouse:
+
+```
+deskflow-core server --bluetooth --bt-name "desk-laptop"
+```
+
+and on the machine being controlled:
+
+```
+deskflow-core client --bluetooth --bt-peer "desk-laptop"
+```
+
+These flags write the `[bluetooth]` settings described in [Valid GUI Keys](#valid-gui-keys), and `Settings::setValue` persists them, so they only have to be given once. Set `bluetooth/enabled=false` (or remove the key) to go back to a network connection. The `DESKFLOW_BT_ENABLED` environment variable overrides `bluetooth/enabled` for a single run.
+
+While the transport is enabled the server ignores `core/interface` and `core/port` for its listener: it listens on `127.0.0.1` only, and the configured port is handed to the transport instead. The client likewise ignores `client/remoteHost`.
+
+## Settings dialog
+
+The same options are available in the GUI, in the *Preferences* dialog on the *Network* tab, in the **Bluetooth transport** group: **Use Bluetooth transport (experimental)** is `bluetooth/enabled`, **Bluetooth peer** is `bluetooth/peer`, **Advertised name** is `bluetooth/name` and **Link backend** is `bluetooth/backend` (*Automatic*, *Qt radio* or *Loopback test*; *Automatic* leaves the key unset). The peer field is only editable in client mode and the advertised name only in server mode, since each side only uses one of them (with no mode chosen yet, both are editable). The values are written when the dialog is accepted and are picked up the next time the core starts.
+
+## Permissions
+
+### macOS
+
+The app declares `NSBluetoothAlwaysUsageDescription` (and `NSBluetoothPeripheralUsageDescription` for older releases) in `Info.plist`, which is what macOS shows in the first run permission prompt. Accept it once per app bundle; if it was denied, re-enable Bluetooth for Deskflow in *System Settings → Privacy & Security → Bluetooth*. A sandboxed or hardened build also needs the `com.apple.security.device.bluetooth` entitlement.
+
+### Windows
+
+No manifest entry is required, but Bluetooth has to be switched on in *Settings → Bluetooth & devices* and the radio has to support the LE peripheral role (GATT server) for the server side. Windows may show a one time notification prompt the first time the app starts advertising.
+
+### Linux
+
+The server needs a running BlueZ stack (`bluetoothd`) and permission to use the adapter, usually membership of the `bluetooth` group or a polkit rule; the adapter must support LE peripheral mode. If the transport cannot open the adapter, Deskflow logs `cannot start the Bluetooth transport` and exits.
+
+## Trying it without radios
+
+The `loopback` backend moves the same chunks over a plain TCP connection, so the whole transport (including chunking and flow control) can be exercised on one machine or in CI:
+
+```
+DESKFLOW_BT_BACKEND=loopback DESKFLOW_BT_LOOPBACK_PORT=7001 deskflow-core server --bluetooth --bt-name test
+DESKFLOW_BT_BACKEND=loopback DESKFLOW_BT_LOOPBACK_PORT=7001 deskflow-core client --bluetooth --bt-peer test
+```
+
+`DESKFLOW_BT_BACKEND` takes precedence over `bluetooth/backend`, and `DESKFLOW_BT_LOOPBACK_PORT` selects the TCP port the two loopback ends use: the server end listens on it (the same port on the Deskflow server and client side, as above) and the client end dials it. `DESKFLOW_BT_LOOPBACK_CHUNK` overrides the chunk size the loopback link reports (180 bytes by default). On a build without Qt Bluetooth the loopback backend is also selected automatically when `DESKFLOW_BT_LOOPBACK_PORT` is set. This backend is for testing only: it does not touch a radio and does not provide any security of its own.
+
+## Troubleshooting
+
+* `cannot start the Bluetooth transport` — no usable adapter, no permission, or the build has no Bluetooth backend. Check `bluetooth/backend` and whether Qt Bluetooth was found when Deskflow was built.
+* The client connects but nothing happens — make sure the peer name/address matches what the server advertises, and that the two machines are not also trying to use the network transport.
+* A dropped link is retried by the client's normal reconnect timer, no restart is needed.
 
 # Server Config
 

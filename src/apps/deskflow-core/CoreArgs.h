@@ -20,5 +20,25 @@ struct CoreArgs
   inline static const auto configOption =
       QCommandLineOption({"s", "settings"}, "override configuration file to use", "configFile");
 
-  inline static const auto options = {helpOption, versionOption, multiInstanceOption, configOption};
+  // Bluetooth transport (experimental)
+  inline static const auto bluetoothOption = QCommandLineOption(
+      "bluetooth", "Use the Bluetooth transport instead of a network connection (experimental)"
+  );
+  inline static const auto btPeerOption =
+      QCommandLineOption("bt-peer", "Bluetooth peer address or advertised name", "address|name");
+  inline static const auto btNameOption =
+      QCommandLineOption("bt-name", "Local name advertised over Bluetooth", "local name");
+  inline static const auto btBackendOption =
+      QCommandLineOption("bt-backend", "Bluetooth backend to use: qt (radio) or loopback (test)", "qt|loopback");
+
+  inline static const auto options = {
+      helpOption,
+      versionOption,
+      multiInstanceOption,
+      configOption,
+      bluetoothOption,
+      btPeerOption,
+      btNameOption,
+      btBackendOption,
+  };
 };

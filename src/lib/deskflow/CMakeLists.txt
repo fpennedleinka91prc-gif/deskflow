@@ -94,6 +94,7 @@ target_link_libraries(${lib_name}
     common
     Qt6::Network
   PRIVATE
+    bluetooth
     platform
 )
 

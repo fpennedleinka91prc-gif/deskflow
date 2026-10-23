@@ -51,6 +51,31 @@ void CoreArgParser::parse()
   if (m_parser.isSet(CoreArgs::configOption)) {
     Settings::setSettingsFile(m_parser.value(CoreArgs::configOption));
   }
+
+  // Bluetooth transport (experimental).  The flags write the settings keys that
+  // `deskflow::net::bt::BtTransport` reads, so the apps and the transport share
+  // a single source of truth.  Settings::setValue() persists them in the config
+  // file, so a single `--bluetooth` run keeps the transport enabled.
+  if (m_parser.isSet(CoreArgs::bluetoothOption)) {
+    Settings::setValue(Settings::Bluetooth::Enabled, true);
+  }
+
+  if (m_parser.isSet(CoreArgs::btPeerOption)) {
+    Settings::setValue(Settings::Bluetooth::Peer, m_parser.value(CoreArgs::btPeerOption));
+  }
+
+  if (m_parser.isSet(CoreArgs::btNameOption)) {
+    Settings::setValue(Settings::Bluetooth::Name, m_parser.value(CoreArgs::btNameOption));
+  }
+
+  if (m_parser.isSet(CoreArgs::btBackendOption)) {
+    const auto backend = m_parser.value(CoreArgs::btBackendOption).trimmed().toLower();
+    if (backend != QLatin1String("qt") && backend != QLatin1String("loopback")) {
+      QTextStream(stdout) << "invalid --bt-backend `" << backend << "', expected `qt' or `loopback'\n";
+      exit(s_exitArgs);
+    }
+    Settings::setValue(Settings::Bluetooth::Backend, backend);
+  }
 }
 
 [[noreturn]] void CoreArgParser::showHelpText() const

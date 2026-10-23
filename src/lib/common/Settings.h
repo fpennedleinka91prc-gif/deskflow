@@ -34,6 +34,15 @@ public:
   inline const static auto UserSettingFile = QStringLiteral("%1/%2.conf").arg(UserDir, kAppName);
   inline const static auto SystemSettingFile = QStringLiteral("%1/%2.conf").arg(SystemDir, kAppName);
 
+  struct Bluetooth
+  {
+    inline static const auto Enabled = QStringLiteral("bluetooth/enabled");
+    inline static const auto Peer = QStringLiteral("bluetooth/peer");
+    inline static const auto Name = QStringLiteral("bluetooth/name");
+    inline static const auto Backend = QStringLiteral("bluetooth/backend");
+    inline static const auto ChunkSize = QStringLiteral("bluetooth/chunkSize");
+    inline static const auto InitialCredits = QStringLiteral("bluetooth/initialCredits");
+  };
   struct Client
   {
     inline static const auto DynamicConnectionRetry = QStringLiteral("client/dynamicConnectionInterval");
@@ -262,7 +271,8 @@ private:
 
   // clang-format off
   inline static const QStringList m_validGroup = {
-      QStringLiteral("client")
+      QStringLiteral("bluetooth")
+    , QStringLiteral("client")
     , QStringLiteral("core")
     , QStringLiteral("daemon")
     , QStringLiteral("gui")
@@ -273,7 +283,13 @@ private:
   };
 
   inline static const QStringList m_validKeys = {
-      Client::DynamicConnectionRetry
+      Bluetooth::Enabled
+    , Bluetooth::Peer
+    , Bluetooth::Name
+    , Bluetooth::Backend
+    , Bluetooth::ChunkSize
+    , Bluetooth::InitialCredits
+    , Client::DynamicConnectionRetry
     , Client::InvertYScroll
     , Client::InvertXScroll
     , Client::LanguageSync

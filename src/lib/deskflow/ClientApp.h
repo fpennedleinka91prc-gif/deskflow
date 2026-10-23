@@ -13,10 +13,16 @@
 
 #include <QList>
 
+#include <memory>
+
 namespace deskflow {
 class Computer;
 class ClientArgs;
 } // namespace deskflow
+
+namespace deskflow::net::bt {
+class BtTransport;
+}
 
 class Event;
 class Client;
@@ -27,7 +33,7 @@ class ClientApp : public App
 {
 public:
   explicit ClientApp(IEventQueue *events, const QString &processName = QString());
-  ~ClientApp() override = default;
+  ~ClientApp() override;
 
   //
   // IApp overrides
@@ -96,4 +102,6 @@ private:
   size_t m_currentServerIndex = 0;
   size_t m_lastServerAddressIndex = 0;
   uint m_retryCount = 0;
+  //! Bluetooth transport, started by parseArgs() when Bluetooth is enabled.
+  std::unique_ptr<deskflow::net::bt::BtTransport> m_btTransport;
 };

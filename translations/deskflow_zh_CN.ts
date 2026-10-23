@@ -1293,6 +1293,42 @@ Enabling this setting will disable the server config GUI.</source>
         <source>Remove all settings</source>
         <translation type="unfinished">移除所有设置</translation>
     </message>
+    <message>
+        <source>Bluetooth transport</source>
+        <translation>蓝牙传输</translation>
+    </message>
+    <message>
+        <source>Use Bluetooth transport (experimental)</source>
+        <translation>使用蓝牙传输（实验性）</translation>
+    </message>
+    <message>
+        <source>Bluetooth peer</source>
+        <translation>蓝牙对端</translation>
+    </message>
+    <message>
+        <source>Address or advertised name of the Bluetooth peer to connect to</source>
+        <translation>要连接的蓝牙对端的地址或广播名称</translation>
+    </message>
+    <message>
+        <source>Advertised name</source>
+        <translation>广播名称</translation>
+    </message>
+    <message>
+        <source>Computer name</source>
+        <translation>计算机名</translation>
+    </message>
+    <message>
+        <source>Link backend</source>
+        <translation>链路后端</translation>
+    </message>
+    <message>
+        <source>Qt radio</source>
+        <translation>Qt 蓝牙</translation>
+    </message>
+    <message>
+        <source>Loopback test</source>
+        <translation>环回测试</translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialogButtonBox</name>
@@ -1391,6 +1427,53 @@ Enabling this setting will disable the server config GUI.</source>
     <message>
         <source>Encryption Disabled</source>
         <translation>加密已禁用</translation>
+    </message>
+</context>
+<context>
+    <name>deskflow::net::bt::BtRelay</name>
+    <message>
+        <source>No Bluetooth backend is available in this build</source>
+        <translation>此构建中没有可用的蓝牙后端</translation>
+    </message>
+    <message>
+        <source>Bluetooth backend: %1</source>
+        <translation>蓝牙后端：%1</translation>
+    </message>
+    <message>
+        <source>Unable to open the local Bluetooth tunnel on 127.0.0.1: %1</source>
+        <translation>无法在 127.0.0.1 上打开本地蓝牙隧道：%1</translation>
+    </message>
+    <message>
+        <source>Local tunnel listening on 127.0.0.1:%1</source>
+        <translation>本地隧道正在 127.0.0.1:%1 上监听</translation>
+    </message>
+    <message>
+        <source>Bluetooth transport stopping</source>
+        <translation>蓝牙传输正在停止</translation>
+    </message>
+    <message>
+        <source>Bluetooth peer connected (%1)</source>
+        <translation>蓝牙对端已连接（%1）</translation>
+    </message>
+    <message>
+        <source>Bluetooth peer disconnected: %1</source>
+        <translation>蓝牙对端已断开：%1</translation>
+    </message>
+    <message>
+        <source>Bluetooth peer closed the tunnel</source>
+        <translation>蓝牙对端关闭了隧道</translation>
+    </message>
+    <message>
+        <source>Deskflow client attached to the local tunnel</source>
+        <translation>Deskflow 客户端已接入本地隧道</translation>
+    </message>
+    <message>
+        <source>Deskflow closed the tunnel</source>
+        <translation>Deskflow 关闭了隧道</translation>
+    </message>
+    <message>
+        <source>Reconnecting to the Bluetooth peer</source>
+        <translation>正在重新连接蓝牙对端</translation>
     </message>
 </context>
 <context>

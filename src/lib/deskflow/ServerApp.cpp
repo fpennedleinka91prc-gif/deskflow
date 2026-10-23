@@ -22,6 +22,7 @@
 #include "net/SocketException.h"
 #include "net/SocketMultiplexer.h"
 #include "net/TCPSocketFactory.h"
+#include "net/bluetooth/BtTransport.h"
 #include "server/ClientListener.h"
 #include "server/ClientProxy.h"
 #include "server/Config.h"
@@ -61,12 +62,52 @@ ServerApp::ServerApp(IEventQueue *events, const QString &processName) : App(even
   // do nothing
 }
 
+ServerApp::~ServerApp() = default;
+
 void ServerApp::parseArgs()
 {
+  const auto port = static_cast<quint16>(Settings::value(Settings::Core::Port).toInt());
+
   if (const auto address = Settings::value(Settings::Core::Interface).toString(); !address.isEmpty()) {
-    *m_deskflowAddress = NetworkAddress(address.toStdString(), Settings::value(Settings::Core::Port).toInt());
+    *m_deskflowAddress = NetworkAddress(address.toStdString(), port);
   } else {
-    *m_deskflowAddress = NetworkAddress(Settings::value(Settings::Core::Port).toInt());
+    *m_deskflowAddress = NetworkAddress(port);
+  }
+
+  // Bluetooth transport (experimental).
+  //
+  // The relay advertises the peripheral and, when a peer connects, dials our own
+  // listener through 127.0.0.1.  We therefore keep the configured port for the
+  // transport but bind the listener to the loopback interface only, so no TCP
+  // port is exposed to the network.
+  //
+  // Started here rather than in runInner(): parseArgs() is reached from
+  // runInner() -> start() -> initApp() -> parseArgs(), i.e. strictly before
+  // mainLoop() -> startServer() -> openClientListener(), which is the ordering
+  // the relay needs.  BtTransport::start() blocks until the relay thread is
+  // ready (or fails), so the reported loopback port is valid when we use it.
+  if (deskflow::net::bt::BtTransport::enabledBySettings()) {
+    const auto config = deskflow::net::bt::BtTransport::configFromSettings();
+    m_btTransport = std::make_unique<deskflow::net::bt::BtTransport>(deskflow::net::bt::Mode::Server, config);
+
+    QString error;
+    if (!m_btTransport->start(port, &error)) {
+      LOG_CRIT(
+          "%s: cannot start the Bluetooth transport: %s" BYE, qPrintable(processName()), qPrintable(error),
+          qPrintable(processName())
+      );
+      bye(s_exitFailed);
+    }
+
+    // Fall back to the configured port if the relay did not report one; the
+    // relay was told to expect the Deskflow listener there.
+    const auto loopbackPort = m_btTransport->localPort() == 0 ? port : m_btTransport->localPort();
+    *m_deskflowAddress = NetworkAddress("127.0.0.1", loopbackPort);
+
+    LOG_INFO(
+        "Bluetooth transport: listening for Bluetooth peers as '%s' on 127.0.0.1:%d", qPrintable(config.localName),
+        static_cast<int>(loopbackPort)
+    );
   }
 
   try {

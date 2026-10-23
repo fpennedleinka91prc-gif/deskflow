@@ -567,6 +567,86 @@
         </layout>
        </item>
        <item>
+        <widget class="QGroupBox" name="groupBluetooth">
+         <property name="sizePolicy">
+          <sizepolicy hsizetype="Preferred" vsizetype="Maximum">
+           <horstretch>0</horstretch>
+           <verstretch>0</verstretch>
+          </sizepolicy>
+         </property>
+         <property name="title">
+          <string>Bluetooth transport</string>
+         </property>
+         <layout class="QVBoxLayout" name="verticalLayoutBluetooth">
+          <item>
+           <widget class="QCheckBox" name="cbBluetooth">
+            <property name="text">
+             <string>Use Bluetooth transport (experimental)</string>
+            </property>
+           </widget>
+          </item>
+          <item>
+           <layout class="QFormLayout" name="formLayoutBluetooth">
+            <item row="0" column="0">
+             <widget class="QLabel" name="lblBtPeer">
+              <property name="text">
+               <string>Bluetooth peer</string>
+              </property>
+             </widget>
+            </item>
+            <item row="0" column="1">
+             <widget class="QLineEdit" name="lineBtPeer">
+              <property name="toolTip">
+               <string>Address or advertised name of the Bluetooth peer to connect to</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="0">
+             <widget class="QLabel" name="lblBtName">
+              <property name="text">
+               <string>Advertised name</string>
+              </property>
+             </widget>
+            </item>
+            <item row="1" column="1">
+             <widget class="QLineEdit" name="lineBtName">
+              <property name="placeholderText">
+               <string>Computer name</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="0">
+             <widget class="QLabel" name="lblBtBackend">
+              <property name="text">
+               <string>Link backend</string>
+              </property>
+             </widget>
+            </item>
+            <item row="2" column="1">
+             <widget class="QComboBox" name="comboBtBackend">
+              <item>
+               <property name="text">
+                <string>Automatic</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Qt radio</string>
+               </property>
+              </item>
+              <item>
+               <property name="text">
+                <string>Loopback test</string>
+               </property>
+              </item>
+             </widget>
+            </item>
+           </layout>
+          </item>
+         </layout>
+        </widget>
+       </item>
+       <item>
         <widget class="QGroupBox" name="groupSecurity">
          <property name="sizePolicy">
           <sizepolicy hsizetype="Preferred" vsizetype="Maximum">

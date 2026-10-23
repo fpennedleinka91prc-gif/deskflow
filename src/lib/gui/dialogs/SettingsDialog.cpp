@@ -39,6 +39,12 @@ SettingsDialog::SettingsDialog(QWidget *parent, const ServerConfig &serverConfig
   ui->lineCommandEnter->setEnabled(false);
   ui->lineCommandExit->setEnabled(false);
 
+  // the Bluetooth backend combo stores the settings value as item data, so the
+  // "Automatic" entry carries an empty value and lets the transport decide
+  ui->comboBtBackend->setItemData(0, QString(), Qt::UserRole);
+  ui->comboBtBackend->setItemData(1, QStringLiteral("qt"), Qt::UserRole);
+  ui->comboBtBackend->setItemData(2, QStringLiteral("loopback"), Qt::UserRole);
+
   // set up the language combo
   I18N::reDetectLanguages();
   ui->comboLanguage->addItems(I18N::detectedLanguages());
@@ -142,6 +148,11 @@ void SettingsDialog::initConnections() const
   connect(ui->cbRunExitCommand, &QCheckBox::toggled, this, &SettingsDialog::setButtonBoxEnabledButtons);
   connect(ui->lineCommandEnter, &QLineEdit::textChanged, this, &SettingsDialog::setButtonBoxEnabledButtons);
   connect(ui->lineCommandExit, &QLineEdit::textChanged, this, &SettingsDialog::setButtonBoxEnabledButtons);
+  connect(ui->cbBluetooth, &QCheckBox::toggled, this, &SettingsDialog::updateBluetoothControls);
+  connect(ui->cbBluetooth, &QCheckBox::toggled, this, &SettingsDialog::setButtonBoxEnabledButtons);
+  connect(ui->lineBtPeer, &QLineEdit::textChanged, this, &SettingsDialog::setButtonBoxEnabledButtons);
+  connect(ui->lineBtName, &QLineEdit::textChanged, this, &SettingsDialog::setButtonBoxEnabledButtons);
+  connect(ui->comboBtBackend, &QComboBox::currentIndexChanged, this, &SettingsDialog::setButtonBoxEnabledButtons);
   connect(Settings::instance(), &Settings::settingsWritableChanged, this, &SettingsDialog::updateControls);
 }
 
@@ -242,6 +253,16 @@ void SettingsDialog::accept()
   Settings::setValue(Settings::Core::EnableExitCommand, ui->cbRunExitCommand->isChecked());
   Settings::setValue(Settings::Core::ComputerEnterCommand, ui->lineCommandEnter->text());
   Settings::setValue(Settings::Core::ComputerExitCommand, ui->lineCommandExit->text());
+  Settings::setValue(Settings::Bluetooth::Enabled, ui->cbBluetooth->isChecked());
+  Settings::setValue(Settings::Bluetooth::Peer, ui->lineBtPeer->text());
+  Settings::setValue(Settings::Bluetooth::Name, ui->lineBtName->text());
+
+  // an empty backend means "automatic", so drop the key instead of storing an
+  // empty value that would otherwise look like an explicit choice
+  const auto bluetoothBackend = ui->comboBtBackend->currentData().toString();
+  Settings::setValue(
+      Settings::Bluetooth::Backend, bluetoothBackend.isEmpty() ? QVariant() : QVariant(bluetoothBackend)
+  );
 
   Settings::ProcessMode mode;
   if (ui->groupService->isChecked())
@@ -302,6 +323,13 @@ void SettingsDialog::loadFromConfig()
     m_interfaceSetOnLoad = true;
   }
 
+  ui->cbBluetooth->setChecked(Settings::value(Settings::Bluetooth::Enabled).toBool());
+  ui->lineBtPeer->setText(Settings::value(Settings::Bluetooth::Peer).toString());
+  ui->lineBtName->setText(Settings::value(Settings::Bluetooth::Name).toString());
+  const auto bluetoothBackendIndex =
+      ui->comboBtBackend->findData(Settings::value(Settings::Bluetooth::Backend).toString(), Qt::UserRole);
+  ui->comboBtBackend->setCurrentIndex(bluetoothBackendIndex > 0 ? bluetoothBackendIndex : 0);
+
   qDebug() << "load from config done";
 
   updateControls();
@@ -337,6 +365,27 @@ void SettingsDialog::updateTlsControlsEnabled()
   ui->widgetTlsCert->setEnabled(enabled);
   ui->btnTlsRegenCert->setEnabled(enabled);
   ui->cbRequireClientCert->setEnabled(enabled && !isClientMode());
+}
+
+void SettingsDialog::updateBluetoothControls()
+{
+  const auto writable = Settings::isWritable();
+  const auto enabled = writable && ui->cbBluetooth->isChecked();
+
+  // the client dials the peer and the server advertises its name, so only the
+  // field that the current core mode uses is editable. before a mode has been
+  // picked both stay available so the dialog is usable on a fresh profile.
+  const auto coreMode = Settings::value(Settings::Core::CoreMode).value<Settings::CoreMode>();
+  const auto clientMode = coreMode == Settings::CoreMode::Client;
+  const auto serverMode = coreMode == Settings::CoreMode::Server;
+
+  ui->cbBluetooth->setEnabled(writable);
+  ui->lblBtPeer->setEnabled(enabled && (clientMode || !serverMode));
+  ui->lineBtPeer->setEnabled(enabled && (clientMode || !serverMode));
+  ui->lblBtName->setEnabled(enabled && (serverMode || !clientMode));
+  ui->lineBtName->setEnabled(enabled && (serverMode || !clientMode));
+  ui->lblBtBackend->setEnabled(enabled);
+  ui->comboBtBackend->setEnabled(enabled);
 }
 
 bool SettingsDialog::isClientMode() const
@@ -403,6 +452,7 @@ void SettingsDialog::updateControls()
   ui->widgetLogFilename->setEnabled(writable && logToFile);
 
   updateTlsControls();
+  updateBluetoothControls();
 }
 
 void SettingsDialog::updateRequestedKeySize() const
@@ -444,6 +494,10 @@ bool SettingsDialog::isModified() const
       (ui->cbRunExitCommand->isChecked() != Settings::value(Settings::Core::EnableExitCommand).toBool()) ||
       (ui->lineCommandEnter->text() != Settings::value(Settings::Core::ComputerEnterCommand).toString()) ||
       (ui->lineCommandExit->text() != Settings::value(Settings::Core::ComputerExitCommand).toString()) ||
+      (ui->cbBluetooth->isChecked() != Settings::value(Settings::Bluetooth::Enabled).toBool()) ||
+      (ui->lineBtPeer->text() != Settings::value(Settings::Bluetooth::Peer).toString()) ||
+      (ui->lineBtName->text() != Settings::value(Settings::Bluetooth::Name).toString()) ||
+      (ui->comboBtBackend->currentData().toString() != Settings::value(Settings::Bluetooth::Backend).toString()) ||
       (I18N::nativeTo639Name(ui->comboLanguage->currentText()) != Settings::value(Settings::Core::Language).toString());
 
   if (!ignoreInterface)
@@ -480,6 +534,10 @@ bool SettingsDialog::isDefault() const
       (ui->lineCommandExit->text() == Settings::defaultValue(Settings::Core::ComputerExitCommand).toString()) &&
       (ui->cbRunEnterCommand->isChecked() == Settings::defaultValue(Settings::Core::EnableEnterCommand).toBool()) &&
       (ui->cbRunExitCommand->isChecked() == Settings::defaultValue(Settings::Core::EnableExitCommand).toBool()) &&
+      (ui->cbBluetooth->isChecked() == Settings::defaultValue(Settings::Bluetooth::Enabled).toBool()) &&
+      (ui->lineBtPeer->text() == Settings::defaultValue(Settings::Bluetooth::Peer).toString()) &&
+      (ui->lineBtName->text() == Settings::defaultValue(Settings::Bluetooth::Name).toString()) &&
+      (ui->comboBtBackend->currentIndex() == 0) &&
       (ui->comboLanguage->currentText() == "English")
   );
 }
@@ -524,6 +582,11 @@ void SettingsDialog::resetToDefault()
   ui->lblDebugWarning->setVisible(false);
 
   ui->comboInterface->setCurrentIndex(0);
+
+  ui->cbBluetooth->setChecked(Settings::defaultValue(Settings::Bluetooth::Enabled).toBool());
+  ui->lineBtPeer->setText(Settings::defaultValue(Settings::Bluetooth::Peer).toString());
+  ui->lineBtName->setText(Settings::defaultValue(Settings::Bluetooth::Name).toString());
+  ui->comboBtBackend->setCurrentIndex(0);
 
   qDebug() << "reset to default values";
   updateControls();

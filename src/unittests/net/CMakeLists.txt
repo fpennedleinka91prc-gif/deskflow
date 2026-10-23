@@ -29,4 +29,20 @@ create_test(
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/src/lib/net"
 )
 
+create_test(
+  NAME BluetoothCodecTests
+  DEPENDS net
+  LIBS base arch mt io net bluetooth ${extra_libs}
+  SOURCE BluetoothCodecTests.cpp
+  WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/src/lib/net"
+)
+
+create_test(
+  NAME BluetoothTransportTests
+  DEPENDS net
+  LIBS base arch mt io net bluetooth ${extra_libs}
+  SOURCE BluetoothTransportTests.cpp
+  WORKING_DIRECTORY "${CMAKE_BINARY_DIR}/src/lib/net"
+)
+
 

@@ -1291,6 +1291,42 @@ L&apos;abilitazione di questa impostazione disabiliterà l&apos;interfaccia graf
         <source>Remove all settings</source>
         <translation type="unfinished">Rimuovi tutte le impostazioni</translation>
     </message>
+    <message>
+        <source>Bluetooth transport</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Use Bluetooth transport (experimental)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth peer</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Address or advertised name of the Bluetooth peer to connect to</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Advertised name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Computer name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Link backend</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Qt radio</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Loopback test</source>
+        <translation type="unfinished"></translation>
+    </message>
 </context>
 <context>
     <name>SettingsDialogButtonBox</name>
@@ -1390,6 +1426,53 @@ L&apos;abilitazione di questa impostazione disabiliterà l&apos;interfaccia graf
     <message>
         <source>Encryption Disabled</source>
         <translation>Crittografia disabilitata</translation>
+    </message>
+</context>
+<context>
+    <name>deskflow::net::bt::BtRelay</name>
+    <message>
+        <source>No Bluetooth backend is available in this build</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth backend: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Unable to open the local Bluetooth tunnel on 127.0.0.1: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Local tunnel listening on 127.0.0.1:%1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth transport stopping</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth peer connected (%1)</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth peer disconnected: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth peer closed the tunnel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Deskflow client attached to the local tunnel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Deskflow closed the tunnel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reconnecting to the Bluetooth peer</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>

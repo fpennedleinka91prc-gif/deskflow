@@ -22,6 +22,7 @@
 #include "net/SocketException.h"
 #include "net/SocketMultiplexer.h"
 #include "net/TCPSocketFactory.h"
+#include "net/bluetooth/BtTransport.h"
 
 #if defined(Q_OS_WIN)
 #include "platform/MSWindowsComputer.h"
@@ -48,8 +49,66 @@ ClientApp::ClientApp(IEventQueue *events, const QString &processName) : App(even
   // do nothing
 }
 
+ClientApp::~ClientApp() = default;
+
 void ClientApp::parseArgs()
 {
+  // Bluetooth transport (experimental).
+  //
+  // The relay listens on an ephemeral loopback port and tunnels it over the BLE
+  // link, so Deskflow itself only ever talks to 127.0.0.1.  Starting the relay
+  // here runs before the client connects (runInner() -> start() -> initApp() ->
+  // parseArgs(), then mainLoop() -> startNode() -> startClient()) and it
+  // replaces the configured remote host: finding the peer is the transport's
+  // job, so an empty `client/remoteHost` is allowed while Bluetooth is on and
+  // `bluetooth/peer` is used instead.
+  if (deskflow::net::bt::BtTransport::enabledBySettings()) {
+    const auto config = deskflow::net::bt::BtTransport::configFromSettings();
+    m_btTransport = std::make_unique<deskflow::net::bt::BtTransport>(deskflow::net::bt::Mode::Client, config);
+
+    QString error;
+    if (!m_btTransport->start(0, &error)) {
+      LOG_CRIT(
+          "%s: cannot start the Bluetooth transport: %s" BYE, qPrintable(processName()), qPrintable(error),
+          qPrintable(processName())
+      );
+      bye(s_exitFailed);
+    }
+
+    const auto loopbackPort = m_btTransport->localPort();
+    if (loopbackPort == 0) {
+      LOG_CRIT(
+          "%s: the Bluetooth transport did not report a loopback port" BYE, qPrintable(processName()),
+          qPrintable(processName())
+      );
+      bye(s_exitFailed);
+    }
+
+    m_serverAddresses.clear();
+    m_serverAddresses.append(NetworkAddress("127.0.0.1", loopbackPort));
+
+    if (!Settings::value(Settings::Client::RemoteHost).toString().isEmpty()) {
+      LOG_WARN("Bluetooth transport is enabled, ignoring the configured remote host(s)");
+    }
+
+    // A missing peer is not fatal: the relay keeps scanning and reports its own
+    // failure, and the user may still configure one in the settings file.
+    const auto peer = config.peerAddress.isEmpty() ? config.peerName : config.peerAddress;
+    if (peer.isEmpty()) {
+      LOG_WARN("no Bluetooth peer configured, use --bt-peer or the bluetooth/peer setting");
+    }
+
+    // Reconnects need no Bluetooth specific code: the relay keeps its loopback
+    // listener open for the whole process lifetime, so a dropped BLE link looks
+    // like an ordinary disconnect/refusal and the existing retry timer
+    // (retryTime()) reconnects to 127.0.0.1.
+    LOG_INFO(
+        "Bluetooth transport: connecting to Bluetooth peer '%s' through 127.0.0.1:%d", qPrintable(peer),
+        static_cast<int>(loopbackPort)
+    );
+    return;
+  }
+
   // save server addresses (comma-separated list supported)
   if (const auto addressList = Settings::value(Settings::Client::RemoteHost).toString(); !addressList.isEmpty()) {
     const int port = Settings::value(Settings::Core::Port).toInt();

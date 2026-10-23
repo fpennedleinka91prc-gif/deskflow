@@ -172,6 +172,16 @@ add_definitions(-DQT_NO_KEYWORDS)
 
 #Find and setup Qt
 find_package(Qt6 ${REQUIRED_QT_VERSION} REQUIRED COMPONENTS Core Widgets Network)
+
+# Optional Bluetooth (BLE) transport for the keyboard/mouse sharing link.
+option(DESKFLOW_ENABLE_BLUETOOTH "Enable the Bluetooth (BLE) transport" ON)
+if(DESKFLOW_ENABLE_BLUETOOTH)
+  find_package(Qt6 ${REQUIRED_QT_VERSION} QUIET COMPONENTS Bluetooth)
+  if(NOT Qt6Bluetooth_FOUND)
+    message(STATUS "Qt Bluetooth not found: building without the Bluetooth transport")
+    set(DESKFLOW_ENABLE_BLUETOOTH OFF)
+  endif()
+endif()
 if(UNIX AND NOT APPLE)
     find_package(Qt6 ${REQUIRED_QT_VERSION} REQUIRED COMPONENTS DBus)
 endif()

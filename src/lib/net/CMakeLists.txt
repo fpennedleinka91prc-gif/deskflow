@@ -60,3 +60,5 @@ if(WIN32)
     PRIVATE Crypt32 ws2_32
   )
 endif()
+
+add_subdirectory(bluetooth)

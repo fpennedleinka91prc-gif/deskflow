@@ -45,6 +45,12 @@
 	<key>com.apple.security.networking.local</key>
 	<true/>
 
+	<!-- Bluetooth transport (experimental) -->
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Deskflow uses Bluetooth to link a server and a client computer so that one keyboard and mouse can control both.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Deskflow uses Bluetooth to link a server and a client computer so that one keyboard and mouse can control both.</string>
+
 	<!-- Accessibility Entitlements -->
 	<key>com.apple.security.accessibility</key>
 	<array>
