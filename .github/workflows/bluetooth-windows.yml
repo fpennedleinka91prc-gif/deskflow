@@ -1,5 +1,13 @@
 # Builds a Windows x64 installer for the Bluetooth-enabled Deskflow fork.
 # Manual/small-scope workflow: only Windows x64, Release, packaged output.
+#
+# Notes:
+#  * aqtinstall 3.3.0 cannot resolve the Qt >= 6.11 repository layout, so this
+#    workflow pins the newest Qt release that still uses the classic layout.
+#  * OpenSSL comes from the OpenSSL that the windows-2022 image ships, which
+#    keeps the build short (no vcpkg bootstrap) and is what find_package wants.
+#  * -DCMAKE_COMPILE_WARNING_AS_ERROR is deliberately left out so that a new
+#    compiler warning cannot hide the actual packaging result.
 
 name: Bluetooth Windows build
 
@@ -38,22 +46,10 @@ jobs:
           # Use the same Qt mirror as the upstream CI; download.qt.io times out.
           AQT_CONFIG: ${{ github.workspace }}/.github/actions/install-dependencies/aqt.ini
         with:
-          # aqtinstall 3.3.0 cannot resolve the new Qt >= 6.11 repository layout,
-          # so pin the newest release that still uses the classic layout.
           version: "6.10.3"
           arch: win64_msvc2022_64
           modules: qtconnectivity
           cache: true
-
-      - name: Build and cache vcpkg dependencies
-        id: vcpkg
-        uses: johnwason/vcpkg-action@v8
-        with:
-          pkgs: openssl
-          extra-args: --classic --host-triplet=x64-windows-release
-          triplet: x64-windows-release
-          token: ${{ github.token }}
-          revision: master
 
       - name: Install WiX toolset
         shell: pwsh
@@ -66,17 +62,33 @@ jobs:
       - name: Configure
         shell: bash
         run: |
+          set -euo pipefail
+          ninja --version
+
+          openssl_root=""
+          for candidate in "/c/Program Files/OpenSSL" "/c/Program Files/OpenSSL-Win64"; do
+            if [ -d "$candidate" ]; then
+              openssl_root="$(cygpath -m "$candidate")"
+              break
+            fi
+          done
+          if [ -z "$openssl_root" ]; then
+            echo "::error::no OpenSSL installation found"
+            exit 1
+          fi
+          echo "using OpenSSL at $openssl_root"
+
           cmake -Bbuild -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DSKIP_BUILD_TESTS=ON \
             -DDESKFLOW_ENABLE_BLUETOOTH=ON \
-            -DPACKAGE_VERSION_LABEL="${{ env.DESKFLOW_VERSION_LABEL }}" \
-            ${{ steps.vcpkg.outputs.vcpkg-cmake-config }}
+            -DOPENSSL_ROOT_DIR="$openssl_root" \
+            -DPACKAGE_VERSION_LABEL="${{ env.DESKFLOW_VERSION_LABEL }}"
 
       - name: Check Bluetooth support was enabled
         shell: bash
         run: |
-          grep -i "DESKFLOW_ENABLE_BLUETOOTH" build/CMakeCache.txt
+          grep -iE "DESKFLOW_ENABLE_BLUETOOTH|Qt6Bluetooth_DIR" build/CMakeCache.txt
 
       - name: Build and package
         shell: bash
