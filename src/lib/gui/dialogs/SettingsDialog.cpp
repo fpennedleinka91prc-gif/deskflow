@@ -31,6 +31,10 @@
 #include <QBluetoothDeviceInfo>
 #endif
 
+#if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
+#include "gui/MacBluetoothScanner.h"
+#endif
+
 using namespace deskflow::gui;
 
 #ifdef DESKFLOW_BLUETOOTH
@@ -441,6 +445,13 @@ void SettingsDialog::startBluetoothScan()
   if (!ui->cbBluetooth->isChecked())
     return;
 
+#if defined(__APPLE__)
+  // Qt cannot scan here: its macOS port has no handler for QBluetoothPermission,
+  // so QBluetoothDeviceDiscoveryAgent always reports a missing permission.
+  startMacBluetoothScan();
+  return;
+#endif
+
   if (m_btAgent == nullptr) {
     m_btAgent = new QBluetoothDeviceDiscoveryAgent(this);
     m_btAgent->setLowEnergyDiscoveryTimeout(kBluetoothScanTimeoutMs);
@@ -461,14 +472,24 @@ void SettingsDialog::startBluetoothScan()
       updateBluetoothControls();
     });
     connect(
-        m_btAgent, &QBluetoothDeviceDiscoveryAgent::errorOccurred, this, [this](QBluetoothDeviceDiscoveryAgent::Error) {
-          // the driver's own wording tells a switched off adapter apart from a
-          // denied Bluetooth permission, which are the two common cases
-          const auto reason = m_btAgent->errorString();
-          ui->lblBtStatus->setText(
-              reason.isEmpty() ? tr("Scan failed, check that Bluetooth is turned on.")
-                               : tr("Scan failed: %1").arg(reason)
-          );
+        m_btAgent, &QBluetoothDeviceDiscoveryAgent::errorOccurred, this,
+        [this](QBluetoothDeviceDiscoveryAgent::Error error) {
+          if (error == QBluetoothDeviceDiscoveryAgent::MissingPermissionsError) {
+            // Both macOS and Windows gate Bluetooth behind a per-application
+            // permission. Without it the scan returns nothing at all, so point
+            // at the switch instead of echoing the driver wording.
+            ui->lblBtStatus->setText(
+                tr("Bluetooth permission is missing. Allow Deskflow in the system privacy settings, then scan again.")
+            );
+          } else {
+            // the driver's own wording tells a switched off adapter apart from
+            // the other failures
+            const auto reason = m_btAgent->errorString();
+            ui->lblBtStatus->setText(
+                reason.isEmpty() ? tr("Scan failed, check that Bluetooth is turned on.")
+                                 : tr("Scan failed: %1").arg(reason)
+            );
+          }
           updateBluetoothControls();
         }
     );
@@ -489,10 +510,45 @@ void SettingsDialog::startBluetoothScan()
 void SettingsDialog::stopBluetoothScan()
 {
 #ifdef DESKFLOW_BLUETOOTH
+#if defined(__APPLE__)
+  if (m_macScanner != nullptr)
+    m_macScanner->stop();
+#endif
   if (m_btAgent != nullptr && m_btAgent->isActive())
     m_btAgent->stop();
 #endif
 }
+
+#if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
+void SettingsDialog::startMacBluetoothScan()
+{
+  if (m_macScanner == nullptr) {
+    m_macScanner = new deskflow::gui::MacBluetoothScanner(this);
+
+    connect(
+        m_macScanner, &deskflow::gui::MacBluetoothScanner::deviceFound, this,
+        [this](const QString &name, const QString &identifier) { addBluetoothDevice(name, identifier); }
+    );
+    connect(m_macScanner, &deskflow::gui::MacBluetoothScanner::finished, this, [this] {
+      if (ui->listBtDevices->count() == 0)
+        ui->lblBtStatus->setText(tr("No devices found"));
+      else
+        ui->lblBtStatus->clear();
+      updateBluetoothControls();
+    });
+    connect(m_macScanner, &deskflow::gui::MacBluetoothScanner::failed, this, [this](const QString &reason) {
+      ui->lblBtStatus->setText(tr("Scan failed: %1").arg(reason));
+      updateBluetoothControls();
+    });
+  }
+
+  m_macScanner->stop();
+  ui->listBtDevices->clear();
+  ui->lblBtStatus->setText(tr("Searching…"));
+  ui->btnBtScan->setEnabled(false);
+  m_macScanner->start(kBluetoothScanTimeoutMs);
+}
+#endif
 
 void SettingsDialog::addBluetoothDevice(const QString &name, const QString &address)
 {

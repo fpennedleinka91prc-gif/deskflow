@@ -17,6 +17,12 @@ class SettingsDialogButtonBox;
 class QBluetoothDeviceDiscoveryAgent;
 #endif
 
+#if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
+namespace deskflow::gui {
+class MacBluetoothScanner;
+}
+#endif
+
 namespace Ui {
 class SettingsDialog;
 }
@@ -48,6 +54,9 @@ private:
   void updateTlsControlsEnabled();
   void updateBluetoothControls();
   void updateBluetoothHint();
+#if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
+  void startMacBluetoothScan();
+#endif
   void startBluetoothScan();
   void stopBluetoothScan();
   void addBluetoothDevice(const QString &name, const QString &address);
@@ -101,5 +110,9 @@ private:
 #ifdef DESKFLOW_BLUETOOTH
   //! Device discovery for the "pick a device" list; created on the first scan.
   QBluetoothDeviceDiscoveryAgent *m_btAgent = nullptr;
+#if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
+  //! Qt has no macOS Bluetooth permission bridge, so the scan is native there.
+  deskflow::gui::MacBluetoothScanner *m_macScanner = nullptr;
+#endif
 #endif
 };

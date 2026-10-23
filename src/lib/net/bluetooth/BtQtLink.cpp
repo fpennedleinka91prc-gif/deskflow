@@ -304,8 +304,18 @@ void BtQtLink::withBluetoothPermission(const std::function<void()> &onGranted)
     onGranted();
     return;
   }
+
+  // Qt does not implement this permission on every platform: the macOS port has
+  // no handler for QBluetoothPermission at all, so it reports "denied" even when
+  // the user granted Bluetooth access. The system still enforces the real grant
+  // the first time CoreBluetooth is used, so a missing Qt bridge must not stop
+  // the link - continue and let the platform decide.
   if (status == Qt::PermissionStatus::Denied) {
-    failPermission();
+    LOG_WARN(
+        "bluetooth: Qt reports no Bluetooth permission (this platform may not implement the Qt permission "
+        "bridge); continuing, the system enforces the real grant on first use"
+    );
+    onGranted();
     return;
   }
 
@@ -314,11 +324,13 @@ void BtQtLink::withBluetoothPermission(const std::function<void()> &onGranted)
     if (m_stopping || generation != m_generation) {
       return;
     }
-    if (result.status() == Qt::PermissionStatus::Granted) {
-      onGranted();
-    } else {
-      failPermission();
+    if (result.status() != Qt::PermissionStatus::Granted) {
+      LOG_WARN(
+          "bluetooth: the Qt permission request did not come back granted; continuing, the system enforces the "
+          "real grant on first use"
+      );
     }
+    onGranted();
   });
 #else
   // Qt < 6.5: the OS either has no permission prompt or asks on first use.

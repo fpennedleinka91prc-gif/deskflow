@@ -8,6 +8,8 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 if(APPLE)
   set (platform_sources
+    MacBluetoothScanner.h
+    MacBluetoothScanner.mm
     OSXHelpers.h
     OSXHelpers.mm
   )
@@ -132,4 +134,11 @@ target_link_libraries(${target}
 if(DESKFLOW_ENABLE_BLUETOOTH)
   target_link_libraries(${target} PUBLIC Qt6::Bluetooth)
   target_compile_definitions(${target} PUBLIC DESKFLOW_BLUETOOTH=1)
+
+  if(APPLE)
+    # macOS: Qt has no Bluetooth permission bridge, so the settings dialog scans
+    # with CoreBluetooth directly (MacBluetoothScanner).
+    set_source_files_properties(MacBluetoothScanner.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(${target} PUBLIC "-framework CoreBluetooth" "-framework Foundation")
+  endif()
 endif()

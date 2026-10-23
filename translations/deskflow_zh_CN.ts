@@ -1246,6 +1246,10 @@ Enabling this setting will disable the server config GUI.</source>
         <translation>未找到设备</translation>
     </message>
     <message>
+        <source>Bluetooth permission is missing. Allow Deskflow in the system privacy settings, then scan again.</source>
+        <translation>缺少蓝牙权限。请在系统隐私设置中允许 Deskflow 使用蓝牙，然后重新扫描。</translation>
+    </message>
+    <message>
         <source>Scan failed, check that Bluetooth is turned on.</source>
         <translation>扫描失败，请检查蓝牙是否已开启。</translation>
     </message>

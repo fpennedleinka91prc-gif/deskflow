@@ -15,6 +15,11 @@
 #include "net/bluetooth/BtQtLink.h"
 #endif
 
+#if defined(__APPLE__) && __has_include("net/bluetooth/BtDarwinLink.h")
+#include "net/bluetooth/BtDarwinLink.h"
+#define DESKFLOW_HAVE_DARWIN_LINK 1
+#endif
+
 namespace deskflow::net::bt {
 
 namespace {
@@ -45,6 +50,14 @@ QString BtLinkFactory::backendName()
   if (requested == QLatin1String("loopback")) {
     return QStringLiteral("loopback");
   }
+#if defined(DESKFLOW_HAVE_DARWIN_LINK)
+  // Qt's macOS port has no QBluetoothPermission bridge, so the native stack is
+  // what auto selection has to use here.
+  if (requested.isEmpty() || requested == QLatin1String("auto") || requested == QLatin1String("darwin") ||
+      requested == QLatin1String("corebluetooth")) {
+    return QStringLiteral("darwin-corebluetooth");
+  }
+#endif
 #if defined(DESKFLOW_BLUETOOTH) && DESKFLOW_BLUETOOTH
   return QStringLiteral("qt-bluetooth");
 #else
@@ -59,6 +72,17 @@ IBtLink *BtLinkFactory::create(QObject *parent)
   if (requested == QLatin1String("loopback")) {
     return new BtLoopbackLink(parent);
   }
+
+#if defined(DESKFLOW_HAVE_DARWIN_LINK)
+  if (
+      requested.isEmpty() || requested == QLatin1String("auto") || requested == QLatin1String("darwin") ||
+      requested == QLatin1String("corebluetooth")
+  ) {
+    // CoreBluetooth directly: Qt refuses every Bluetooth call on macOS because
+    // it has no permission bridge for QBluetoothPermission.
+    return new BtDarwinLink(parent);
+  }
+#endif
 
 #if defined(DESKFLOW_BLUETOOTH) && DESKFLOW_BLUETOOTH
   if (

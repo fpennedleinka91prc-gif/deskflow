@@ -40,4 +40,16 @@ target_link_libraries(${lib_name}
 if(DESKFLOW_ENABLE_BLUETOOTH)
   target_link_libraries(${lib_name} PUBLIC Qt6::Bluetooth)
   target_compile_definitions(${lib_name} PUBLIC DESKFLOW_BLUETOOTH=1)
+
+  # Qt's macOS port has no bridge for QBluetoothPermission, so the native
+  # CoreBluetooth backend is the only usable one there.
+  if(APPLE)
+    target_sources(${lib_name} PRIVATE
+      BtDarwinLink.mm
+      BtDarwinLink.h
+    )
+    set_source_files_properties(BtDarwinLink.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(${lib_name} PUBLIC "-framework CoreBluetooth" "-framework Foundation")
+    target_compile_definitions(${lib_name} PUBLIC DESKFLOW_BLUETOOTH_DARWIN=1)
+  endif()
 endif()
