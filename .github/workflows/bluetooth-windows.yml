@@ -34,6 +34,9 @@ jobs:
 
       - name: Install Qt (with Bluetooth module)
         uses: jurplel/install-qt-action@v4
+        env:
+          # Use the same Qt mirror as the upstream CI; download.qt.io times out.
+          AQT_CONFIG: ${{ github.workspace }}/.github/actions/install-dependencies/aqt.ini
         with:
           version: "6.12"
           arch: win64_msvc2022_64
