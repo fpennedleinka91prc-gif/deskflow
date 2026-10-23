@@ -1248,6 +1248,10 @@ Enabling this setting will disable the server config GUI.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Scan failed: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Searching…</source>
         <translation type="unfinished"></translation>
     </message>

@@ -462,7 +462,13 @@ void SettingsDialog::startBluetoothScan()
     });
     connect(
         m_btAgent, &QBluetoothDeviceDiscoveryAgent::errorOccurred, this, [this](QBluetoothDeviceDiscoveryAgent::Error) {
-          ui->lblBtStatus->setText(tr("Scan failed, check that Bluetooth is turned on."));
+          // the driver's own wording tells a switched off adapter apart from a
+          // denied Bluetooth permission, which are the two common cases
+          const auto reason = m_btAgent->errorString();
+          ui->lblBtStatus->setText(
+              reason.isEmpty() ? tr("Scan failed, check that Bluetooth is turned on.")
+                               : tr("Scan failed: %1").arg(reason)
+          );
           updateBluetoothControls();
         }
     );

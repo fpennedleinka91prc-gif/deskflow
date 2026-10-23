@@ -1183,7 +1183,7 @@ Enabling this setting will disable the server config GUI.</source>
     </message>
     <message>
         <source>This build has no Bluetooth support.</source>
-        <translation type="unfinished"></translation>
+        <translation>此版本未编译蓝牙支持。</translation>
     </message>
     <message>
         <source>TLS Certificate Regenerated</source>
@@ -1235,27 +1235,31 @@ Enabling this setting will disable the server config GUI.</source>
     </message>
     <message>
         <source>Select the computer you want to control this one.</source>
-        <translation type="unfinished"></translation>
+        <translation>选择要控制这台电脑的那台设备。</translation>
     </message>
     <message>
         <source>This computer waits for the other one to connect. Its Bluetooth name is %1.</source>
-        <translation type="unfinished"></translation>
+        <translation>这台电脑会等待另一台电脑连接，它的蓝牙名称是 %1。</translation>
     </message>
     <message>
         <source>No devices found</source>
-        <translation type="unfinished"></translation>
+        <translation>未找到设备</translation>
     </message>
     <message>
         <source>Scan failed, check that Bluetooth is turned on.</source>
-        <translation type="unfinished"></translation>
+        <translation>扫描失败，请检查蓝牙是否已开启。</translation>
+    </message>
+    <message>
+        <source>Scan failed: %1</source>
+        <translation>扫描失败：%1</translation>
     </message>
     <message>
         <source>Searching…</source>
-        <translation type="unfinished"></translation>
+        <translation>正在搜索…</translation>
     </message>
     <message>
         <source>Selected %1</source>
-        <translation type="unfinished"></translation>
+        <translation>已选择 %1</translation>
     </message>
     <message>
         <source>Automatic</source>
@@ -1359,11 +1363,11 @@ Enabling this setting will disable the server config GUI.</source>
     </message>
     <message>
         <source>Use Bluetooth</source>
-        <translation type="unfinished"></translation>
+        <translation>使用蓝牙</translation>
     </message>
     <message>
         <source>Scan</source>
-        <translation type="unfinished"></translation>
+        <translation>扫描</translation>
     </message>
 </context>
 <context>

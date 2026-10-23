@@ -1220,6 +1220,10 @@ Al habilitar esta opción, se deshabilitará la interfaz gráfica de usuario (GU
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Scan failed: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Searching…</source>
         <translation type="unfinished"></translation>
     </message>

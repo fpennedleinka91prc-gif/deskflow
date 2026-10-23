@@ -1220,6 +1220,10 @@ L&apos;abilitazione di questa impostazione disabiliterà l&apos;interfaccia graf
         <translation type="unfinished"></translation>
     </message>
     <message>
+        <source>Scan failed: %1</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>Searching…</source>
         <translation type="unfinished"></translation>
     </message>
