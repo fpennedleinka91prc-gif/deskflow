@@ -71,6 +71,24 @@ alive with a real delegate.
     return;
   }
 
+  // Only report peripherals that advertise the Deskflow service.  This keeps
+  // the list to the computers running Deskflow (the ones that can share a
+  // keyboard and mouse), instead of every Bluetooth device in range.
+  id services = advertisementData[CBAdvertisementDataServiceUUIDsKey];
+  if (![services isKindOfClass:[NSArray class]]) {
+    return;
+  }
+  bool isDeskflowPeer = false;
+  for (CBUUID *uuid in static_cast<NSArray *>(services)) {
+    if ([uuid.UUIDString caseInsensitiveCompare:kDeskflowServiceUuid] == NSOrderedSame) {
+      isDeskflowPeer = true;
+      break;
+    }
+  }
+  if (!isDeskflowPeer) {
+    return;
+  }
+
   NSString *name = peripheral.name;
   if (name.length == 0) {
     id advertised = advertisementData[CBAdvertisementDataLocalNameKey];
@@ -78,26 +96,13 @@ alive with a real delegate.
       name = static_cast<NSString *>(advertised);
     }
   }
-
-  // A scan for every service also returns beacons and other nameless gadgets;
-  // keep those out of the list unless they are a Deskflow peer.
-  bool isDeskflowPeer = false;
-  id services = advertisementData[CBAdvertisementDataServiceUUIDsKey];
-  if ([services isKindOfClass:[NSArray class]]) {
-    for (CBUUID *uuid in static_cast<NSArray *>(services)) {
-      if ([uuid.UUIDString caseInsensitiveCompare:kDeskflowServiceUuid] == NSOrderedSame) {
-        isDeskflowPeer = true;
-        break;
-      }
-    }
-  }
-
-  if (name.length == 0 && !isDeskflowPeer) {
-    return;
-  }
   if (name.length == 0) {
-    name = @"Deskflow";
+    name = @"Deskflow computer";
   }
+
+  // Mark it clearly so the user can tell it apart from any classic Bluetooth
+  // devices that might still be listed.
+  name = [name stringByAppendingString:@" (Deskflow)"];
 
   self.owner->addDevice(QString::fromNSString(name), QString::fromNSString(peripheral.identifier.UUIDString));
 }

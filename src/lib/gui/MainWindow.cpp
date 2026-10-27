@@ -34,6 +34,7 @@
 
 #include <QCheckBox>
 #include <QCloseEvent>
+#include <QComboBox>
 #include <QDesktopServices>
 #include <QFileDialog>
 #include <QLocalServer>
@@ -50,6 +51,12 @@
 #include <QScrollBar>
 
 #include <memory>
+
+#if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
+#if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
+#include "gui/MacBluetoothScanner.h"
+#endif
+#endif
 
 #if defined(Q_OS_MACOS)
 #include <ApplicationServices/ApplicationServices.h>
@@ -191,6 +198,15 @@ void MainWindow::restoreWindow()
     move(screenGeometry.center() - rect().center());
   }
 
+  // Make sure the window is at least as tall as its content needs, otherwise a
+  // saved geometry from an older build (e.g. before the Bluetooth row existed)
+  // can be too short and the layout squashes widgets on top of each other.
+  const auto minSize = minimumSizeHint();
+  const auto cur = geometry();
+  if (cur.height() < minSize.height()) {
+    setGeometry(cur.x(), cur.y(), qMax(cur.width(), minSize.width()), minSize.height());
+  }
+
   if (!Settings::value(Settings::Gui::LogExpanded).toBool())
     setFixedSize(size());
 }
@@ -212,6 +228,11 @@ void MainWindow::setupControls()
 
   ui->serverOptions->setVisible(false);
   ui->clientOptions->setVisible(false);
+
+  // Bluetooth quick control initial state.
+  ui->groupBluetoothQuick->setVisible(true);
+  ui->cbBluetoothQuick->setChecked(Settings::value(Settings::Bluetooth::Enabled).toBool());
+  ui->comboBluetoothPeers->clear();
 
   const auto coreMode = Settings::value(Settings::Core::CoreMode).value<Settings::CoreMode>();
   ui->rbModeClient->setChecked(coreMode == Settings::CoreMode::Client);
@@ -297,6 +318,10 @@ void MainWindow::connectSlots()
 
   connect(ui->rbModeServer, &QRadioButton::toggled, this, &MainWindow::coreModeToggled);
   connect(ui->rbModeClient, &QRadioButton::toggled, this, &MainWindow::coreModeToggled);
+
+  connect(ui->cbBluetoothQuick, &QCheckBox::toggled, this, &MainWindow::quickBluetoothToggled);
+  connect(ui->btnBluetoothScanQuick, &QPushButton::clicked, this, &MainWindow::quickBluetoothScan);
+  connect(ui->comboBluetoothPeers, &QComboBox::currentIndexChanged, this, &MainWindow::quickBluetoothPeerSelected);
 
   connect(m_logDock->toggleViewAction(), &QAction::toggled, this, &MainWindow::toggleLogVisible);
 
@@ -547,6 +572,8 @@ void MainWindow::updateModeControls()
 
   if (isServer || isClient)
     updateModeControlLabels();
+
+  updateQuickBluetoothControls();
 }
 
 void MainWindow::updateModeControlLabels()
@@ -582,6 +609,104 @@ void MainWindow::updateModeControlLabels()
   } else {
     ui->btnToggleCore->setText(startText);
     ui->btnToggleCore->setIcon(startIcon);
+  }
+}
+
+void MainWindow::updateQuickBluetoothControls()
+{
+  const bool bluetoothEnabled = Settings::value(Settings::Bluetooth::Enabled).toBool();
+
+  // Keep the checkbox in sync with the setting (e.g. after opening Settings).
+  ui->cbBluetoothQuick->blockSignals(true);
+  ui->cbBluetoothQuick->setChecked(bluetoothEnabled);
+  ui->cbBluetoothQuick->blockSignals(false);
+
+  // The quick scan picks a peer for the client, so it only makes sense while
+  // the transport is on and we are in client mode.
+  const bool isClient = m_coreProcess.mode() == Settings::CoreMode::Client;
+  ui->btnBluetoothScanQuick->setEnabled(bluetoothEnabled && isClient);
+  ui->comboBluetoothPeers->setEnabled(bluetoothEnabled && isClient);
+
+  const QString peer = Settings::value(Settings::Bluetooth::Peer).toString();
+  if (!peer.isEmpty()) {
+    ui->lblBluetoothQuickStatus->setText(tr("Connected via Bluetooth to %1").arg(peer));
+  } else if (bluetoothEnabled) {
+    ui->lblBluetoothQuickStatus->setText(
+        isClient ? tr("Scan and pick the other computer.") : tr("Waiting for the other computer to connect.")
+    );
+  } else {
+    ui->lblBluetoothQuickStatus->clear();
+  }
+}
+
+void MainWindow::quickBluetoothToggled(bool checked)
+{
+  Settings::setValue(Settings::Bluetooth::Enabled, checked);
+  Settings::save();
+  updateQuickBluetoothControls();
+  // Restart the transport if the core is running so the change takes effect.
+  if (m_coreProcess.isStarted()) {
+    m_coreProcess.restart();
+  }
+}
+
+void MainWindow::quickBluetoothScan()
+{
+#ifdef DESKFLOW_BLUETOOTH
+  if (!ui->cbBluetoothQuick->isChecked()) {
+    return;
+  }
+  ui->comboBluetoothPeers->clear();
+  ui->lblBluetoothQuickStatus->setText(tr("Searching…"));
+
+#if defined(__APPLE__)
+  if (m_quickBtScanner == nullptr) {
+    m_quickBtScanner = new deskflow::gui::MacBluetoothScanner(this);
+    connect(
+        m_quickBtScanner, &deskflow::gui::MacBluetoothScanner::deviceFound, this,
+        [this](const QString &name, const QString &identifier) {
+          const auto display = name.isEmpty() ? identifier : QStringLiteral("%1 (%2)").arg(name, identifier);
+          ui->comboBluetoothPeers->addItem(display, identifier);
+        }
+    );
+    connect(m_quickBtScanner, &deskflow::gui::MacBluetoothScanner::finished, this, [this] {
+      if (ui->comboBluetoothPeers->count() == 0) {
+        ui->lblBluetoothQuickStatus->setText(tr("No devices found"));
+      } else {
+        ui->lblBluetoothQuickStatus->setText(tr("Pick a computer"));
+      }
+      ui->btnBluetoothScanQuick->setEnabled(ui->cbBluetoothQuick->isChecked());
+    });
+    connect(m_quickBtScanner, &deskflow::gui::MacBluetoothScanner::failed, this, [this](const QString &reason) {
+      ui->lblBluetoothQuickStatus->setText(tr("Scan failed: %1").arg(reason));
+      ui->btnBluetoothScanQuick->setEnabled(ui->cbBluetoothQuick->isChecked());
+    });
+  }
+
+  ui->btnBluetoothScanQuick->setEnabled(false);
+  m_quickBtScanner->start(10000);
+#else
+  // Non-macOS uses the Qt agent; for now the quick control is macOS focused.
+  // Keep the transport enabled regardless so the core still uses Bluetooth.
+  ui->lblBluetoothQuickStatus->setText(tr("Bluetooth setup is in Preferences."));
+#endif
+#endif
+}
+
+void MainWindow::quickBluetoothPeerSelected(int index)
+{
+  if (index < 0) {
+    return;
+  }
+  const QString identifier = ui->comboBluetoothPeers->itemData(index).toString();
+  if (identifier.isEmpty()) {
+    return;
+  }
+  Settings::setValue(Settings::Bluetooth::Peer, identifier);
+  Settings::save();
+  ui->lblBluetoothQuickStatus->setText(tr("Connected via Bluetooth to %1").arg(identifier));
+  if (m_coreProcess.isStarted()) {
+    m_coreProcess.restart();
   }
 }
 

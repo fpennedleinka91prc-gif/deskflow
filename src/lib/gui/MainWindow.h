@@ -21,6 +21,12 @@
 #include "gui/core/NetworkMonitor.h"
 #include "net/Fingerprint.h"
 
+#if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
+namespace deskflow::gui {
+class MacBluetoothScanner;
+}
+#endif
+
 #ifdef Q_OS_MACOS
 #include "gui/OSXHelpers.h"
 #endif
@@ -147,6 +153,12 @@ private:
 
   bool canRunCore() const;
 
+  // Bluetooth quick controls on the main window.
+  void quickBluetoothToggled(bool checked);
+  void quickBluetoothScan();
+  void quickBluetoothPeerSelected(int index);
+  void updateQuickBluetoothControls();
+
   /**
    * @brief trustedFingerprintDatabase get the FingerprintDatabase for the trusted clients or trusted servers.
    * @return The path to the trusted fingerprint file
@@ -206,6 +218,11 @@ private:
   // Network monitoring
   NetworkMonitor *m_networkMonitor = nullptr;
   QString m_currentIpAddress;
+
+  // Bluetooth quick controls.
+#if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
+  deskflow::gui::MacBluetoothScanner *m_quickBtScanner = nullptr;
+#endif
 
   // Server IP strategy optimization
   QStringList m_serverStartIPs;

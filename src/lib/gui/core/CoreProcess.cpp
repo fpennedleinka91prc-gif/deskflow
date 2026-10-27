@@ -417,6 +417,27 @@ void CoreProcess::start(std::optional<ProcessMode> processModeOption)
 
   QStringList args = {coreMode};
 
+  // Pass the Bluetooth transport request on the command line, so it reaches the
+  // core regardless of which settings file the core ends up reading.  The GUI
+  // toggles Settings::Bluetooth::Enabled; mirror that here so the core enables
+  // the Bluetooth link and actually starts advertising (server) or connecting
+  // (client) instead of the plain network transport.
+  if (Settings::value(Settings::Bluetooth::Enabled).toBool()) {
+    args << QStringLiteral("--bluetooth");
+    const auto peer = Settings::value(Settings::Bluetooth::Peer).toString().trimmed();
+    if (!peer.isEmpty()) {
+      args << QStringLiteral("--bt-peer") << peer;
+    }
+    const auto localName = Settings::value(Settings::Bluetooth::Name).toString().trimmed();
+    if (!localName.isEmpty()) {
+      args << QStringLiteral("--bt-name") << localName;
+    }
+    const auto backend = Settings::value(Settings::Bluetooth::Backend).toString().trimmed();
+    if (!backend.isEmpty()) {
+      args << QStringLiteral("--bt-backend") << backend;
+    }
+  }
+
   if (m_mode == Settings::CoreMode::Server) {
     const auto [hasNeededPermissions, configFilename] = persistServerConfig();
     if (configFilename.isEmpty()) {
