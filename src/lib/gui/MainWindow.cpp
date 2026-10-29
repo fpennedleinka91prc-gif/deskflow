@@ -644,9 +644,18 @@ void MainWindow::quickBluetoothToggled(bool checked)
   Settings::setValue(Settings::Bluetooth::Enabled, checked);
   Settings::save();
   updateQuickBluetoothControls();
-  // Restart the transport if the core is running so the change takes effect.
-  if (m_coreProcess.isStarted()) {
-    m_coreProcess.restart();
+
+  if (checked) {
+    // Turning Bluetooth on with a mode already chosen should "just work": start
+    // the core if it is not running yet, otherwise restart it so the transport
+    // picks up the new setting.
+    if (m_coreProcess.mode() != Settings::CoreMode::None) {
+      if (!m_coreProcess.isStarted()) {
+        startCore();
+      } else {
+        m_coreProcess.restart();
+      }
+    }
   }
 }
 
@@ -704,9 +713,15 @@ void MainWindow::quickBluetoothPeerSelected(int index)
   }
   Settings::setValue(Settings::Bluetooth::Peer, identifier);
   Settings::save();
-  ui->lblBluetoothQuickStatus->setText(tr("Connected via Bluetooth to %1").arg(identifier));
-  if (m_coreProcess.isStarted()) {
-    m_coreProcess.restart();
+  ui->lblBluetoothQuickStatus->setText(tr("Connecting via Bluetooth to %1").arg(identifier));
+  // Connect right away: start the core if needed, otherwise restart so it picks
+  // up the newly selected peer.
+  if (m_coreProcess.mode() != Settings::CoreMode::None) {
+    if (!m_coreProcess.isStarted()) {
+      startCore();
+    } else {
+      m_coreProcess.restart();
+    }
   }
 }
 
@@ -1450,5 +1465,12 @@ bool MainWindow::canRunCore() const
   const auto mode = m_coreProcess.mode();
   const bool isServer = mode == Settings::CoreMode::Server;
   const bool isClient = mode == Settings::CoreMode::Client;
+
+  if (Settings::value(Settings::Bluetooth::Enabled).toBool()) {
+    // BlueTooth mode: the client's peer comes from the Bluetooth link, not the
+    // hostname field, so the client can run without typing a host/IP.
+    return isServer || isClient;
+  }
+
   return ((isServer || isClient) && (isClient && !ui->lineHostname->text().isEmpty()) || isServer);
 }

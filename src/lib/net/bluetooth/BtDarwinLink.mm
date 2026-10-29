@@ -821,7 +821,12 @@ void BtDarwinLinkPrivate::beginScanning()
     return;
   }
 
-  [central scanForPeripheralsWithServices:nil
+  // Ask the stack to hand us only peripherals that advertise the Deskflow
+  // service.  This keeps the scan cheap and means every device we see is a
+  // potential peer, so a stale peer address or a truncated name can no longer
+  // make the link never connect.
+  CBUUID *filterUuid = uuidFromUtf8(kServiceUuid);
+  [central scanForPeripheralsWithServices:(filterUuid != nil ? @[ filterUuid ] : nil)
                                   options:@{CBCentralManagerScanOptionAllowDuplicatesKey : @NO}];
   scanning = true;
   const int timeout = config.connectTimeoutMs > 0 ? config.connectTimeoutMs : kDefaultScanTimeoutMs;
@@ -859,9 +864,12 @@ bool BtDarwinLinkPrivate::matchesPeer(CBPeripheral *candidate, NSDictionary *adv
     }
   }
 
-  // Nothing to match against: the scan filter already narrowed the field to
-  // peripherals that advertise the Deskflow service.
-  return wantedAddress.isEmpty() && wantedName.isEmpty();
+  // The scan itself is filtered to the Deskflow service UUID, so any peripheral
+  // that reaches this point is a Deskflow peer.  Accepting it means a stale
+  // saved address (CoreBluetooth identifiers change between pairings) or a name
+  // that got truncated in the advertisement cannot leave the client scanning
+  // forever with no way to connect.
+  return true;
 }
 
 void BtDarwinLinkPrivate::handleCentralState(CBManagerState state)
