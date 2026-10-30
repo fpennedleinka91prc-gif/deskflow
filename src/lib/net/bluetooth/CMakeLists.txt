@@ -47,9 +47,22 @@ if(DESKFLOW_ENABLE_BLUETOOTH)
     target_sources(${lib_name} PRIVATE
       BtDarwinLink.mm
       BtDarwinLink.h
+      BtRfcommLink.mm
+      BtRfcommLink.h
     )
-    set_source_files_properties(BtDarwinLink.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
-    target_link_libraries(${lib_name} PUBLIC "-framework CoreBluetooth" "-framework Foundation")
+    set_source_files_properties(BtDarwinLink.mm BtRfcommLink.mm PROPERTIES COMPILE_OPTIONS "-fobjc-arc")
+    target_link_libraries(${lib_name} PUBLIC "-framework CoreBluetooth" "-framework IOBluetooth" "-framework Foundation")
     target_compile_definitions(${lib_name} PUBLIC DESKFLOW_BLUETOOTH_DARWIN=1)
+  endif()
+
+  # Windows: Qt has no BLE peripheral role there, so classic Bluetooth (RFCOMM)
+  # is the transport that can serve; it needs the Winsock Bluetooth API.
+  if(WIN32)
+    target_sources(${lib_name} PRIVATE
+      BtRfcommWinLink.cpp
+      BtRfcommWinLink.h
+    )
+    target_link_libraries(${lib_name} PUBLIC ws2_32 bthprops)
+    target_compile_definitions(${lib_name} PUBLIC DESKFLOW_BLUETOOTH_WINRFCOMM=1)
   endif()
 endif()

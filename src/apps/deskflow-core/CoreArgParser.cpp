@@ -70,8 +70,12 @@ void CoreArgParser::parse()
 
   if (m_parser.isSet(CoreArgs::btBackendOption)) {
     const auto backend = m_parser.value(CoreArgs::btBackendOption).trimmed().toLower();
-    if (backend != QLatin1String("qt") && backend != QLatin1String("loopback")) {
-      QTextStream(stdout) << "invalid --bt-backend `" << backend << "', expected `qt' or `loopback'\n";
+    const bool known = backend == QLatin1String("qt") || backend == QLatin1String("loopback") ||
+                       backend == QLatin1String("darwin") || backend == QLatin1String("rfcomm") ||
+                       backend == QLatin1String("spp");
+    if (!known) {
+      QTextStream(stdout) << "invalid --bt-backend `" << backend
+                          << "', expected `qt', `loopback', `darwin' or `rfcomm'\n";
       exit(s_exitArgs);
     }
     Settings::setValue(Settings::Bluetooth::Backend, backend);

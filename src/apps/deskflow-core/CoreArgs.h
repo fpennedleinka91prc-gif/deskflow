@@ -29,7 +29,7 @@ struct CoreArgs
   inline static const auto btNameOption =
       QCommandLineOption("bt-name", "Local name advertised over Bluetooth", "local name");
   inline static const auto btBackendOption =
-      QCommandLineOption("bt-backend", "Bluetooth backend to use: qt (radio) or loopback (test)", "qt|loopback");
+      QCommandLineOption("bt-backend", "Bluetooth backend: qt, darwin, rfcomm (classic) or loopback (test)", "backend");
 
   inline static const auto options = {
       helpOption,

@@ -18,6 +18,13 @@
 #if defined(__APPLE__) && __has_include("net/bluetooth/BtDarwinLink.h")
 #include "net/bluetooth/BtDarwinLink.h"
 #define DESKFLOW_HAVE_DARWIN_LINK 1
+#include "net/bluetooth/BtRfcommLink.h"
+#define DESKFLOW_HAVE_RFCOMM_LINK 1
+#endif
+
+#if defined(_WIN32) && __has_include("net/bluetooth/BtRfcommWinLink.h")
+#include "net/bluetooth/BtRfcommWinLink.h"
+#define DESKFLOW_HAVE_WINRFCOMM_LINK 1
 #endif
 
 namespace deskflow::net::bt {
@@ -50,6 +57,12 @@ QString BtLinkFactory::backendName()
   if (requested == QLatin1String("loopback")) {
     return QStringLiteral("loopback");
   }
+#if defined(DESKFLOW_HAVE_RFCOMM_LINK) || defined(DESKFLOW_HAVE_WINRFCOMM_LINK)
+  if (requested == QLatin1String("rfcomm") || requested == QLatin1String("spp") ||
+      requested == QLatin1String("classic")) {
+    return QStringLiteral("rfcomm");
+  }
+#endif
 #if defined(DESKFLOW_HAVE_DARWIN_LINK)
   // Qt's macOS port has no QBluetoothPermission bridge, so the native stack is
   // what auto selection has to use here.
@@ -72,6 +85,19 @@ IBtLink *BtLinkFactory::create(QObject *parent)
   if (requested == QLatin1String("loopback")) {
     return new BtLoopbackLink(parent);
   }
+
+#if defined(DESKFLOW_HAVE_WINRFCOMM_LINK)
+  if (requested == QLatin1String("rfcomm") || requested == QLatin1String("spp") ||
+      requested == QLatin1String("classic")) {
+    return new BtRfcommWinLink(parent);
+  }
+#endif
+#if defined(DESKFLOW_HAVE_RFCOMM_LINK)
+  if (requested == QLatin1String("rfcomm") || requested == QLatin1String("spp") ||
+      requested == QLatin1String("classic")) {
+    return new BtRfcommLink(parent);
+  }
+#endif
 
 #if defined(DESKFLOW_HAVE_DARWIN_LINK)
   if (
