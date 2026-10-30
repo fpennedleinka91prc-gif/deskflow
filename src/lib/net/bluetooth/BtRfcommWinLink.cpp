@@ -18,7 +18,8 @@
 #include <ws2bth.h>
 #include <bluetoothapis.h>
 
-//! Local SDP service handle, 0 means "no service published".
+namespace deskflow::net::bt {
+
 namespace {
 
 //! The service GUID identifies the Deskflow serial port to SDP clients.
@@ -419,6 +420,8 @@ QString BtRfcommWinLink::describe() const
 }
 
 #else // !_WIN32
+
+namespace deskflow::net::bt {
 
 class BtRfcommWinLink::Private
 {
