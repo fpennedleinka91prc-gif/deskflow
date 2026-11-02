@@ -237,6 +237,7 @@ void CoreProcess::startForegroundProcess(const QStringList &args)
   if (m_process->waitForStarted()) {
     setProcessState(Started);
   } else {
+    qCritical("failed to start core process: %s (error %d)", qPrintable(m_process->errorString()), m_process->error());
     setProcessState(Stopped);
     Q_EMIT error(Error::StartFailed);
   }

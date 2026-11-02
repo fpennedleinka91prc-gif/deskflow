@@ -53,9 +53,6 @@
 #include <memory>
 
 #if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
-#if defined(DESKFLOW_BLUETOOTH) && defined(__APPLE__)
-#include "gui/MacBluetoothScanner.h"
-#endif
 #endif
 
 #if defined(Q_OS_MACOS)
@@ -86,6 +83,8 @@ MainWindow::MainWindow()
       m_actionRestartCore{new QAction(this)},
       m_actionStopCore{new QAction(this)},
       m_actionShowHelp{new QAction(this)},
+      m_actionOpenLogFile{new QAction(this)},
+      m_actionOpenLogFolder{new QAction(this)},
       m_networkMonitor{new NetworkMonitor(this)}
 {
   ui->setupUi(this);
@@ -230,9 +229,9 @@ void MainWindow::setupControls()
   ui->clientOptions->setVisible(false);
 
   // Bluetooth quick control initial state.
-  ui->groupBluetoothQuick->setVisible(true);
-  ui->cbBluetoothQuick->setChecked(Settings::value(Settings::Bluetooth::Enabled).toBool());
-  ui->comboBluetoothPeers->clear();
+  const bool bluetoothOn = Settings::value(Settings::Bluetooth::Enabled).toBool();
+  ui->rbTransportBluetooth->setChecked(bluetoothOn);
+  ui->rbTransportLan->setChecked(!bluetoothOn);
 
   const auto coreMode = Settings::value(Settings::Core::CoreMode).value<Settings::CoreMode>();
   ui->rbModeClient->setChecked(coreMode == Settings::CoreMode::Client);
@@ -319,11 +318,27 @@ void MainWindow::connectSlots()
   connect(ui->rbModeServer, &QRadioButton::toggled, this, &MainWindow::coreModeToggled);
   connect(ui->rbModeClient, &QRadioButton::toggled, this, &MainWindow::coreModeToggled);
 
-  connect(ui->cbBluetoothQuick, &QCheckBox::toggled, this, &MainWindow::quickBluetoothToggled);
-  connect(ui->btnBluetoothScanQuick, &QPushButton::clicked, this, &MainWindow::quickBluetoothScan);
-  connect(ui->comboBluetoothPeers, &QComboBox::currentIndexChanged, this, &MainWindow::quickBluetoothPeerSelected);
+  connect(ui->rbTransportLan, &QRadioButton::toggled, this, &MainWindow::transportChanged);
+  connect(ui->rbTransportBluetooth, &QRadioButton::toggled, this, &MainWindow::transportChanged);
 
   connect(m_logDock->toggleViewAction(), &QAction::toggled, this, &MainWindow::toggleLogVisible);
+  connect(m_actionOpenLogFile, &QAction::triggered, this, [] {
+    const QString logPath = Settings::value(Settings::Log::File).toString();
+    if (!QFile::exists(logPath)) {
+      QDir().mkpath(QFileInfo(logPath).absolutePath());
+      QFile f(logPath);
+      if (f.open(QFile::WriteOnly)) {
+        f.close();
+      }
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(logPath));
+  });
+  connect(m_actionOpenLogFolder, &QAction::triggered, this, [] {
+    const QString logPath = Settings::value(Settings::Log::File).toString();
+    const QString dirPath = QFileInfo(logPath).absolutePath();
+    QDir().mkpath(dirPath);
+    QDesktopServices::openUrl(QUrl::fromLocalFile(dirPath));
+  });
 
   connect(m_statusBar, &StatusBar::requestShowMyFingerprints, this, &MainWindow::showMyFingerprint);
   connect(m_statusBar, &StatusBar::requestUpdateVersion, this, &MainWindow::openGetNewVersionUrl);
@@ -573,7 +588,7 @@ void MainWindow::updateModeControls()
   if (isServer || isClient)
     updateModeControlLabels();
 
-  updateQuickBluetoothControls();
+  updateTransportControls();
 }
 
 void MainWindow::updateModeControlLabels()
@@ -612,110 +627,54 @@ void MainWindow::updateModeControlLabels()
   }
 }
 
-void MainWindow::updateQuickBluetoothControls()
+void MainWindow::updateTransportControls()
 {
-  const bool bluetoothEnabled = Settings::value(Settings::Bluetooth::Enabled).toBool();
+  const bool bluetooth = Settings::value(Settings::Bluetooth::Enabled).toBool();
 
-  // Keep the checkbox in sync with the setting (e.g. after opening Settings).
-  ui->cbBluetoothQuick->blockSignals(true);
-  ui->cbBluetoothQuick->setChecked(bluetoothEnabled);
-  ui->cbBluetoothQuick->blockSignals(false);
+  ui->rbTransportLan->blockSignals(true);
+  ui->rbTransportBluetooth->blockSignals(true);
+  ui->rbTransportBluetooth->setChecked(bluetooth);
+  ui->rbTransportLan->setChecked(!bluetooth);
+  ui->rbTransportLan->blockSignals(false);
+  ui->rbTransportBluetooth->blockSignals(false);
 
-  // The quick scan picks a peer for the client, so it only makes sense while
-  // the transport is on and we are in client mode.
-  const bool isClient = m_coreProcess.mode() == Settings::CoreMode::Client;
-  ui->btnBluetoothScanQuick->setEnabled(bluetoothEnabled && isClient);
-  ui->comboBluetoothPeers->setEnabled(bluetoothEnabled && isClient);
-
-  const QString peer = Settings::value(Settings::Bluetooth::Peer).toString();
-  if (!peer.isEmpty()) {
-    ui->lblBluetoothQuickStatus->setText(tr("Connected via Bluetooth to %1").arg(peer));
-  } else if (bluetoothEnabled) {
-    ui->lblBluetoothQuickStatus->setText(
-        isClient ? tr("Scan and pick the other computer.") : tr("Waiting for the other computer to connect.")
+  if (bluetooth) {
+    ui->lblTransportStatus->setText(
+        m_coreProcess.mode() == Settings::CoreMode::Server ? tr("Waiting for the other computer to connect over Bluetooth.")
+                                                          : tr("Connect over Bluetooth to the other computer.")
     );
   } else {
-    ui->lblBluetoothQuickStatus->clear();
+    ui->lblTransportStatus->clear();
   }
 }
 
-void MainWindow::quickBluetoothToggled(bool checked)
+void MainWindow::transportChanged()
 {
-  Settings::setValue(Settings::Bluetooth::Enabled, checked);
-  Settings::save();
-  updateQuickBluetoothControls();
+  const bool bluetooth = ui->rbTransportBluetooth->isChecked();
+  Settings::setValue(Settings::Bluetooth::Enabled, bluetooth);
 
-  if (checked) {
-    // Turning Bluetooth on with a mode already chosen should "just work": start
-    // the core if it is not running yet, otherwise restart it so the transport
-    // picks up the new setting.
-    if (m_coreProcess.mode() != Settings::CoreMode::None) {
-      if (!m_coreProcess.isStarted()) {
-        startCore();
-      } else {
-        m_coreProcess.restart();
-      }
-    }
-  }
-}
-
-void MainWindow::quickBluetoothScan()
-{
-#ifdef DESKFLOW_BLUETOOTH
-  if (!ui->cbBluetoothQuick->isChecked()) {
-    return;
-  }
-  ui->comboBluetoothPeers->clear();
-  ui->lblBluetoothQuickStatus->setText(tr("Searching…"));
-
-#if defined(__APPLE__)
-  if (m_quickBtScanner == nullptr) {
-    m_quickBtScanner = new deskflow::gui::MacBluetoothScanner(this);
-    connect(
-        m_quickBtScanner, &deskflow::gui::MacBluetoothScanner::deviceFound, this,
-        [this](const QString &name, const QString &identifier) {
-          const auto display = name.isEmpty() ? identifier : QStringLiteral("%1 (%2)").arg(name, identifier);
-          ui->comboBluetoothPeers->addItem(display, identifier);
-        }
-    );
-    connect(m_quickBtScanner, &deskflow::gui::MacBluetoothScanner::finished, this, [this] {
-      if (ui->comboBluetoothPeers->count() == 0) {
-        ui->lblBluetoothQuickStatus->setText(tr("No devices found"));
-      } else {
-        ui->lblBluetoothQuickStatus->setText(tr("Pick a computer"));
-      }
-      ui->btnBluetoothScanQuick->setEnabled(ui->cbBluetoothQuick->isChecked());
-    });
-    connect(m_quickBtScanner, &deskflow::gui::MacBluetoothScanner::failed, this, [this](const QString &reason) {
-      ui->lblBluetoothQuickStatus->setText(tr("Scan failed: %1").arg(reason));
-      ui->btnBluetoothScanQuick->setEnabled(ui->cbBluetoothQuick->isChecked());
-    });
-  }
-
-  ui->btnBluetoothScanQuick->setEnabled(false);
-  m_quickBtScanner->start(10000);
+  if (bluetooth) {
+    // Pick the backend that can actually serve on this platform:
+    //   - Windows has no BLE peripheral role in Qt, but it can publish a
+    //     classic Bluetooth (SPP/RFCOMM) server, so "rfcomm" is the one the
+    //     server side needs.
+    //   - macOS cannot publish an SPP server, so a Mac server uses BLE; as a
+    //     client macOS can use either.  Keep the BLE backend there because it
+    //     works for both roles.
+#if defined(Q_OS_WIN)
+    Settings::setValue(Settings::Bluetooth::Backend, QStringLiteral("rfcomm"));
 #else
-  // Non-macOS uses the Qt agent; for now the quick control is macOS focused.
-  // Keep the transport enabled regardless so the core still uses Bluetooth.
-  ui->lblBluetoothQuickStatus->setText(tr("Bluetooth setup is in Preferences."));
+    Settings::setValue(Settings::Bluetooth::Backend, QStringLiteral("darwin"));
 #endif
-#endif
-}
+  } else {
+    Settings::setValue(Settings::Bluetooth::Backend, QVariant());
+  }
 
-void MainWindow::quickBluetoothPeerSelected(int index)
-{
-  if (index < 0) {
-    return;
-  }
-  const QString identifier = ui->comboBluetoothPeers->itemData(index).toString();
-  if (identifier.isEmpty()) {
-    return;
-  }
-  Settings::setValue(Settings::Bluetooth::Peer, identifier);
   Settings::save();
-  ui->lblBluetoothQuickStatus->setText(tr("Connecting via Bluetooth to %1").arg(identifier));
-  // Connect right away: start the core if needed, otherwise restart so it picks
-  // up the newly selected peer.
+  updateTransportControls();
+
+  // Apply the choice immediately: start the core when a mode is already picked,
+  // otherwise restart it so the new transport is used.
   if (m_coreProcess.mode() != Settings::CoreMode::None) {
     if (!m_coreProcess.isStarted()) {
       startCore();
@@ -808,6 +767,9 @@ void MainWindow::createMenuBar()
   m_menuEdit->addAction(m_actionSettings);
 
   m_menuView->addAction(m_logDock->toggleViewAction());
+  m_menuView->addSeparator();
+  m_menuView->addAction(m_actionOpenLogFile);
+  m_menuView->addAction(m_actionOpenLogFolder);
 
   m_menuHelp->addAction(m_actionAbout);
   m_menuHelp->addAction(m_actionShowHelp);
@@ -1207,6 +1169,8 @@ void MainWindow::updateText()
   m_actionAbout->setText(tr("About %1...").arg(kAppName));
 
   m_actionShowHelp->setText(tr("View &Help"));
+  m_actionOpenLogFile->setText(tr("Open &Log File"));
+  m_actionOpenLogFolder->setText(tr("Open Log &Folder"));
 
   //: start / restart core shortcut
   m_actionStartCore->setShortcut(QKeySequence(tr("Ctrl+S")));

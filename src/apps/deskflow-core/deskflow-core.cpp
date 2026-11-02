@@ -13,6 +13,7 @@
 #include "base/Log.h"
 #include "common/Constants.h"
 #include "common/ExitCodes.h"
+#include "common/VersionInfo.h"
 #include "deskflow/ClientApp.h"
 #include "deskflow/ServerApp.h"
 #include "deskflow/ipc/CoreIpcServer.h"
@@ -82,6 +83,9 @@ int main(int argc, char **argv)
   Log log;
   qInstallMessageHandler(qtMessageHandler);
 
+  LOG_INFO("deskflow-core started: %s (PID %lld)", qPrintable(kDisplayVersion), static_cast<long long>(QCoreApplication::applicationPid()));
+  LOG_INFO("arguments: %s", qPrintable(QCoreApplication::arguments().join(QLatin1Char(' '))));
+
   CoreArgParser parser(QCoreApplication::arguments());
 
   // Print any parser errors
@@ -115,6 +119,7 @@ int main(int argc, char **argv)
   }
 
   parser.parse();
+  LOG_INFO("settings file: %s", qPrintable(Settings::settingsFile()));
 
   EventQueue events;
   const auto processName = QFileInfo(argv[0]).fileName();

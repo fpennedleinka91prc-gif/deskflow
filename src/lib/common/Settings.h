@@ -369,7 +369,6 @@ private:
     , Client::InvertXScroll
     , Client::LanguageSync
     , Client::XdpClipboardRetried
-    , Log::ToFile
     , Log::GuiDebug
     , Server::DefaultLockToComputerState
     , Server::DisableLockToComputer
@@ -388,6 +387,7 @@ private:
     , Gui::CloseReminder
     , Gui::LogExpanded
     , Gui::SymbolicTrayIcon
+    , Log::ToFile
     , Security::TlsEnabled
     , Security::CheckPeers
     , Server::EnableClipboard

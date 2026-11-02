@@ -88,6 +88,10 @@ void ServerApp::parseArgs()
   // ready (or fails), so the reported loopback port is valid when we use it.
   if (deskflow::net::bt::BtTransport::enabledBySettings()) {
     const auto config = deskflow::net::bt::BtTransport::configFromSettings();
+    LOG_INFO(
+        "Bluetooth transport: initializing server with local name '%s'",
+        qPrintable(config.localName)
+    );
     m_btTransport = std::make_unique<deskflow::net::bt::BtTransport>(deskflow::net::bt::Mode::Server, config);
 
     QString error;

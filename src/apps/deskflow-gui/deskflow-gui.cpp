@@ -36,6 +36,11 @@
 #include "platform/XDGPortalRegistry.h"
 #endif
 
+#if defined(Q_OS_WIN)
+#include <windows.h>
+#include <cstdio>
+#endif
+
 using namespace deskflow::gui;
 
 #if defined(Q_OS_MACOS)
@@ -46,6 +51,14 @@ const static auto kHeader = QStringLiteral("%1: %2\n").arg(kAppName, kDisplayVer
 
 int main(int argc, char *argv[])
 {
+#if defined(Q_OS_WIN)
+  if (AttachConsole(ATTACH_PARENT_PROCESS)) {
+    FILE *fp = nullptr;
+    freopen_s(&fp, "CONOUT$", "w", stdout);
+    freopen_s(&fp, "CONOUT$", "w", stderr);
+    freopen_s(&fp, "CONIN$", "r", stdin);
+  }
+#endif
 #if defined(Q_OS_UNIX) && defined(QT_DEBUG)
   // Fixes Fedora bug where qDebug() messages aren't printed.
   QLoggingCategory::setFilterRules(QStringLiteral("*.debug=true\nqt.*=false"));

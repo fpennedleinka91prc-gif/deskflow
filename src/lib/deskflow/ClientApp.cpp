@@ -64,6 +64,10 @@ void ClientApp::parseArgs()
   // `bluetooth/peer` is used instead.
   if (deskflow::net::bt::BtTransport::enabledBySettings()) {
     const auto config = deskflow::net::bt::BtTransport::configFromSettings();
+    LOG_INFO(
+        "Bluetooth transport: initializing client (peer: '%s')",
+        qPrintable(config.peerAddress.isEmpty() ? config.peerName : config.peerAddress)
+    );
     m_btTransport = std::make_unique<deskflow::net::bt::BtTransport>(deskflow::net::bt::Mode::Client, config);
 
     QString error;

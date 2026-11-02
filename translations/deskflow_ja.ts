@@ -571,12 +571,28 @@ Do you want to connect to the server?
         <translation>切断</translation>
     </message>
     <message>
+        <source>Waiting for the other computer to connect over Bluetooth.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connect over Bluetooth to the other computer.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>&lt;p&gt;Failed to connect to the server &apos;%1&apos;.&lt;/p&gt;&lt;p&gt;A Client with your name is already connected to the server.&lt;/p&gt;Please ensure that you&apos;re using a unique name and that only a single instance of the client process is running.&lt;/p&gt;</source>
         <translation>&lt;p&gt;サーバー &apos;%1&apos; への接続に失敗しました。&lt;/p&gt;&lt;p&gt;同じ名前のクライアントがサーバーに接続済です。&lt;/p&gt;&lt;p&gt;名前の重複がないことと、クライアントプロセスが多重起動していない事を確認してください。&lt;/p&gt;</translation>
     </message>
     <message>
         <source>View &amp;Help</source>
         <translation>ヘルプを表示(&amp;H)</translation>
+    </message>
+    <message>
+        <source>Open &amp;Log File</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open Log &amp;Folder</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Invalid Computer Name</source>
@@ -742,6 +758,26 @@ Additionally, check you are able to %1 the server config file: %2</source>
     <message>
         <source>&lt;p&gt;Keyboard layout support requires matching layouts on all computers. The following layouts from the other computer are not installed on this computer:&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Please install them to enable support for these layouts.&lt;/p&gt;</source>
         <translation>&lt;p&gt;キーボードレイアウトのサポートには対応するレイアウトが全てのコンピューターに必要です。別のコンピューターで使用されている以下のレイアウトがこのコンピューターにインストールされていません:&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;サポートを有効にするには、これらのレイアウトをインストールしてください。&lt;/p&gt;</translation>
+    </message>
+    <message>
+        <source>Connection</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Share the keyboard and mouse over Wi-Fi or Ethernet.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Local network</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Share the keyboard and mouse over Bluetooth, no network needed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth</source>
+        <translation type="unfinished"></translation>
     </message>
 </context>
 <context>
@@ -1243,6 +1279,10 @@ Enabling this setting will disable the server config GUI.</source>
     </message>
     <message>
         <source>No devices found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth permission is missing. Allow Deskflow in the system privacy settings, then scan again.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

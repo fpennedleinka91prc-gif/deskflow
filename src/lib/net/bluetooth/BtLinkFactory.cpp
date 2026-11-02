@@ -57,7 +57,13 @@ QString BtLinkFactory::backendName()
   if (requested == QLatin1String("loopback")) {
     return QStringLiteral("loopback");
   }
-#if defined(DESKFLOW_HAVE_RFCOMM_LINK) || defined(DESKFLOW_HAVE_WINRFCOMM_LINK)
+#if defined(DESKFLOW_HAVE_WINRFCOMM_LINK)
+  if (requested.isEmpty() || requested == QLatin1String("auto") ||
+      requested == QLatin1String("rfcomm") || requested == QLatin1String("spp") ||
+      requested == QLatin1String("classic")) {
+    return QStringLiteral("rfcomm");
+  }
+#elif defined(DESKFLOW_HAVE_RFCOMM_LINK)
   if (requested == QLatin1String("rfcomm") || requested == QLatin1String("spp") ||
       requested == QLatin1String("classic")) {
     return QStringLiteral("rfcomm");
@@ -81,13 +87,18 @@ QString BtLinkFactory::backendName()
 IBtLink *BtLinkFactory::create(QObject *parent)
 {
   const QString requested = requestedBackend();
+  LOG_INFO(
+      "bluetooth: requested backend is \"%s\", selected backend is \"%s\"",
+      requested.isEmpty() ? "(default)" : qPrintable(requested), qPrintable(backendName())
+  );
 
   if (requested == QLatin1String("loopback")) {
     return new BtLoopbackLink(parent);
   }
 
 #if defined(DESKFLOW_HAVE_WINRFCOMM_LINK)
-  if (requested == QLatin1String("rfcomm") || requested == QLatin1String("spp") ||
+  if (requested.isEmpty() || requested == QLatin1String("auto") ||
+      requested == QLatin1String("rfcomm") || requested == QLatin1String("spp") ||
       requested == QLatin1String("classic")) {
     return new BtRfcommWinLink(parent);
   }

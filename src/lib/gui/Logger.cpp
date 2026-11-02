@@ -9,7 +9,9 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QMessageBox>
+#include <QTextStream>
 #include <QTime>
 
 #if defined(Q_OS_WIN)
@@ -43,9 +45,21 @@ QString printLine(FILE *out, const QString &type, const QString &message, const 
   // the debug output API, because it's difficult to view stdout and stderr from
   // a Windows GUI app.
   OutputDebugStringA(terminatedLogLine.toLocal8Bit().constData());
+  QTextStream(out) << terminatedLogLine;
 #else
   QTextStream(out) << terminatedLogLine;
 #endif
+
+  if (Settings::value(Settings::Log::ToFile).toBool()) {
+    const auto logPath = Settings::value(Settings::Log::File).toString();
+    if (!logPath.isEmpty()) {
+      QFile logFile(logPath);
+      if (logFile.open(QFile::WriteOnly | QFile::Append)) {
+        QTextStream(&logFile) << terminatedLogLine;
+        logFile.close();
+      }
+    }
+  }
 
   return logLine;
 }

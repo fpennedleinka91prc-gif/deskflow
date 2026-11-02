@@ -599,8 +599,24 @@ Vuoi connetterti al server?
         <translation>Disconnetti</translation>
     </message>
     <message>
+        <source>Waiting for the other computer to connect over Bluetooth.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connect over Bluetooth to the other computer.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>%1 Connection Error</source>
         <translation>Errore di connessione %1</translation>
+    </message>
+    <message>
+        <source>Open &amp;Log File</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Open Log &amp;Folder</source>
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>Invalid Computer Name</source>
@@ -741,6 +757,26 @@ Inoltre, verifica di poter %1 il file di configurazione del server: %2</translat
     </message>
     <message>
         <source>&lt;p&gt;Keyboard layout support requires matching layouts on all computers. The following layouts from the other computer are not installed on this computer:&lt;/p&gt;&lt;p&gt;&lt;b&gt;%1&lt;/b&gt;&lt;/p&gt;&lt;p&gt;Please install them to enable support for these layouts.&lt;/p&gt;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Connection</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Share the keyboard and mouse over Wi-Fi or Ethernet.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Local network</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Share the keyboard and mouse over Bluetooth, no network needed.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth</source>
         <translation type="unfinished"></translation>
     </message>
 </context>
@@ -1213,6 +1249,10 @@ L&apos;abilitazione di questa impostazione disabiliterà l&apos;interfaccia graf
     </message>
     <message>
         <source>No devices found</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Bluetooth permission is missing. Allow Deskflow in the system privacy settings, then scan again.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
