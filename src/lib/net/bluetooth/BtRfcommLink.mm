@@ -77,8 +77,7 @@ name brought in by the using-declaration above.
 {
   (void)channel;
   if (self.owner != nullptr) {
-    auto *link = static_cast<BtRfcommLink *>(self.owner);
-    Q_EMIT link->disconnected(QStringLiteral("the Bluetooth data channel closed"));
+    static_cast<BtRfcommLink *>(self.owner)->handleChannelClosed();
   }
 }
 
@@ -270,6 +269,22 @@ QString BtRfcommLink::describe() const
 void BtRfcommLink::handleChannelOpenStatus(int status, void *openedChannel)
 {
   d->onChannelOpenFinished(status, openedChannel);
+}
+
+void BtRfcommLink::handleChannelClosed()
+{
+  if (!d->running || !d->connected) {
+    return;
+  }
+  // Drop the dead channel and clear the state so a later startClient() (the
+  // relay schedules one on disconnect) can dial the peer again; leaving
+  // `connected` set would make connectPeer() return early forever.
+  d->connected = false;
+  d->connecting = false;
+  d->channel = nil;
+  d->device = nil;
+  LOG_INFO("bluetooth/rfcomm: the data channel closed");
+  Q_EMIT disconnected(QStringLiteral("the Bluetooth data channel closed"));
 }
 
 IOBluetoothDevice *BtRfcommLink::Private::findPairedDevice(const QString &wanted)

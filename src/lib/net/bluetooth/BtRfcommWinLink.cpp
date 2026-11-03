@@ -139,6 +139,10 @@ public:
   int publishedChannel = 0;
   QString peerLabel;
 
+  // Set when ::send() reported WSAEWOULDBLOCK; readLoop() then keeps offering
+  // writable() so the relay retries once the Bluetooth stack has drained.
+  bool sendBlocked = false;
+
   QTimer *retryTimer = nullptr;
   QTimer *acceptTimer = nullptr;
   QTimer *readTimer = nullptr;
@@ -383,6 +387,13 @@ void BtRfcommWinLink::Private::readLoop()
     return;
   }
 
+  // A previous send filled the RFCOMM buffer; give the relay another chance to
+  // flush, because without a socket event there is nothing else that would.
+  if (sendBlocked) {
+    sendBlocked = false;
+    Q_EMIT q->writable();
+  }
+
   char buffer[4096];
   const int received = ::recv(dataSocket, buffer, sizeof(buffer), 0);
   if (received <= 0) {
@@ -603,9 +614,15 @@ bool BtRfcommWinLink::sendChunk(const QByteArray &chunk)
   const int sent = ::send(d->dataSocket, chunk.constData(), chunk.size(), 0);
   if (sent <= 0) {
     const int err = WSAGetLastError();
+    if (err == WSAEWOULDBLOCK) {
+      // The RFCOMM buffer is full; readLoop() retries through writable().
+      d->sendBlocked = true;
+      return false;
+    }
     LOG_WARN("bluetooth/rfcomm: send failed (error 0x%x - %d)", err, err);
     return false;
   }
+  d->sendBlocked = false;
 
   static quint64 totalSent = 0;
   totalSent += sent;

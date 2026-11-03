@@ -501,7 +501,13 @@ bool Client::setupComputer(int16_t protocolMinor)
 void Client::setupTimer()
 {
   assert(m_timer == nullptr);
-  m_timer = m_events->newOneShotTimer(2.0, nullptr);
+  // A Bluetooth tunnel needs far longer than a LAN connection: the TLS
+  // handshake is chunked over a slow RFCOMM link with credit based flow
+  // control, so several round trips can easily exceed the normal timeout.
+  const bool bluetooth = qEnvironmentVariableIsSet("DESKFLOW_BT_ENABLED")
+                             ? qEnvironmentVariableIntValue("DESKFLOW_BT_ENABLED") != 0
+                             : Settings::value(Settings::Bluetooth::Enabled).toBool();
+  m_timer = m_events->newOneShotTimer(bluetooth ? 10.0 : 2.0, nullptr);
   m_events->addHandler(EventTypes::Timer, m_timer, [this](const auto &) { handleConnectTimeout(); });
 }
 
