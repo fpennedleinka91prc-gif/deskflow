@@ -164,7 +164,21 @@ BtRfcommWinLink::BtRfcommWinLink(QObject *parent) : IBtLink(parent), d(new Priva
       return;
     }
     if (d->mode == Mode::Server) {
-      d->acceptLoop();
+      // A disconnect tears down the listening socket (see cleanup()), so on
+      // retry we must rebuild it from scratch: re-create the socket, re-bind,
+      // re-listen and re-register the SDP record.  Calling acceptLoop() alone
+      // would return immediately because listenSocket is INVALID_SOCKET.
+      if (!d->publishService()) {
+        LOG_ERR("bluetooth/rfcomm: re-publishService failed on retry");
+        Q_EMIT errorOccurred(QStringLiteral("Could not re-open the Bluetooth serial port on this computer"));
+        return;
+      }
+      if (d->acceptTimer != nullptr) {
+        d->acceptTimer->start();
+      }
+      if (d->statusTimer != nullptr) {
+        d->statusTimer->start();
+      }
     } else {
       d->connectToServer();
     }
