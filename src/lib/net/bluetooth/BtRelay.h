@@ -108,6 +108,10 @@ private:
   bool m_started = false;
   bool m_running = false;
   bool m_linkBlocked = false;
+  //! Whether ready() has already been emitted (client mode only).
+  bool m_readyEmitted = false;
+  //! Bytes received from the link that do not yet form a complete wire chunk.
+  QByteArray m_inPending;
 };
 
 } // namespace deskflow::net::bt

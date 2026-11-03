@@ -159,6 +159,11 @@ void BluetoothTransportTests::transportReportsLoopbackPort()
   QVERIFY(peerPort != 0);
   qputenv("DESKFLOW_BT_LOOPBACK_PORT", QByteArray::number(peerPort));
 
+  // Client-mode transport waits for the link to come up before reporting
+  // ready, so stand up a matching loopback peer on the port it dials.
+  QTcpServer loopbackPeer;
+  QVERIFY(loopbackPeer.listen(QHostAddress::LocalHost, peerPort));
+
   Config config;
   config.localName = QStringLiteral("unit-test-port");
 
@@ -167,6 +172,12 @@ void BluetoothTransportTests::transportReportsLoopbackPort()
   QVERIFY2(client.start(0, &error), qPrintable(error));
   QVERIFY(client.isRunning());
   QVERIFY(client.localPort() != 0);
+
+  // The loopback link must actually establish for ready() to be reported.
+  QTRY_VERIFY_WITH_TIMEOUT(loopbackPeer.hasPendingConnections(), 15000);
+  QScopedPointer<QTcpSocket> peer(loopbackPeer.nextPendingConnection());
+  QVERIFY(peer);
+  QTRY_COMPARE_WITH_TIMEOUT(peer->state(), QAbstractSocket::ConnectedState, 15000);
 
   QTcpSocket probe;
   probe.connectToHost(QHostAddress::LocalHost, client.localPort());

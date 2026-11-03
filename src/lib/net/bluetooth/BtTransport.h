@@ -45,7 +45,7 @@ public:
   BtTransport &operator=(const BtTransport &) = delete;
 
   //! Start the relay.  \param serverPort Deskflow listen port, server mode only.
-  bool start(quint16 serverPort, QString *error = nullptr, int timeoutMs = 10000);
+  bool start(quint16 serverPort, QString *error = nullptr, int timeoutMs = 20000);
 
   //! Loopback port Deskflow should connect to (client mode).
   quint16 localPort() const;

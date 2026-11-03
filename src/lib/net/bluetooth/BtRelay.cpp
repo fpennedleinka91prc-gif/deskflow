@@ -22,6 +22,8 @@ namespace {
 constexpr int kTcpRetryMs = 500;
 //! Upper bound for bytes held while the Deskflow socket is still coming up.
 constexpr qsizetype kMaxPendingToTcp = 4 * 1024 * 1024;
+//! Upper bound for a partially received wire chunk buffered across reads.
+constexpr qsizetype kMaxInPending = 4 * 1024 * 1024;
 } // namespace
 
 BtRelay::BtRelay(Mode mode, Config config, quint16 serverPort, QObject *parent)
@@ -82,7 +84,9 @@ void BtRelay::start()
     Q_EMIT ready(m_serverPort);
   } else {
     m_link->startClient(m_config);
-    Q_EMIT ready(m_localPort);
+    // Client mode: hold back ready() until the link is actually up, so
+    // Deskflow doesn't dial the loopback tunnel (and time out on its 2s
+    // connect timer) before the RFCOMM link has been established.
   }
 }
 
@@ -110,6 +114,11 @@ void BtRelay::onLinkConnected()
     connectTcp();
   } else {
     beginSession();
+    // Now that the link carries data, tell Deskflow it can dial the tunnel.
+    if (!m_readyEmitted) {
+      m_readyEmitted = true;
+      Q_EMIT ready(m_localPort);
+    }
   }
 }
 
@@ -120,6 +129,7 @@ void BtRelay::onLinkDisconnected(const QString &reason)
   m_codec.reset();
   m_outbox.clear();
   m_linkBlocked = false;
+  m_inPending.clear();
   if (m_mode == Mode::Client) {
     scheduleLinkRestart();
   }
@@ -131,34 +141,59 @@ void BtRelay::onLinkError(const QString &message)
   dropTcp(message);
 }
 
-void BtRelay::onLinkChunk(const QByteArray &chunk)
+void BtRelay::onLinkChunk(const QByteArray &bytes)
 {
-  const QByteArray payload = m_codec.decode(chunk);
-  if (m_codec.hasError()) {
-    Q_EMIT failed(m_codec.errorString());
-    dropTcp(m_codec.errorString());
+  // RFCOMM (and GATT) deliver byte streams, not whole codec chunks: a single
+  // receive can carry several wire chunks (recv() coalescing) or only part of
+  // one.  Reassemble them here, one complete [type|len|payload] chunk at a
+  // time, before handing each to the codec, which expects exactly one chunk.
+  m_inPending.append(bytes);
+  if (m_inPending.size() > kMaxInPending) {
+    Q_EMIT failed(QStringLiteral("bluetooth: inbound buffer overflow"));
+    dropTcp(QStringLiteral("bluetooth: inbound buffer overflow"));
+    m_inPending.clear();
     return;
   }
 
-  if (!payload.isEmpty()) {
-    if (m_tcpSocket != nullptr) {
-      m_tcpSocket->write(payload);
-    } else if (m_pendingToTcp.size() < kMaxPendingToTcp) {
-      // The Deskflow side is not attached yet; keep the bytes for it.
-      m_pendingToTcp.append(payload);
-    } else {
-      LOG_WARN("bluetooth: dropping tunnel bytes, no Deskflow socket is attached");
+  while (true) {
+    if (m_codec.hasError() || m_codec.peerClosed()) {
+      break;
     }
-  }
+    if (m_inPending.size() < BtCodec::kHeaderSize) {
+      break;
+    }
+    const int len = static_cast<quint16>(m_inPending.at(1)) | (static_cast<quint16>(m_inPending.at(2)) << 8);
+    const qsizetype chunkSize = BtCodec::kHeaderSize + len;
+    if (m_inPending.size() < chunkSize) {
+      break; // not a full chunk yet
+    }
+    const QByteArray chunk = m_inPending.left(chunkSize);
+    m_inPending.remove(0, chunkSize);
 
-  if (m_codec.peerClosed()) {
-    Q_EMIT status(tr("Bluetooth peer closed the tunnel"));
-    dropTcp(tr("Bluetooth peer closed the tunnel"));
-    return;
+    const QByteArray payload = m_codec.decode(chunk);
+    if (m_codec.hasError()) {
+      Q_EMIT failed(m_codec.errorString());
+      dropTcp(m_codec.errorString());
+      return;
+    }
+    if (!payload.isEmpty()) {
+      if (m_tcpSocket != nullptr) {
+        m_tcpSocket->write(payload);
+      } else if (m_pendingToTcp.size() < kMaxPendingToTcp) {
+        // The Deskflow side is not attached yet; keep the bytes for it.
+        m_pendingToTcp.append(payload);
+      } else {
+        LOG_WARN("bluetooth: dropping tunnel bytes, no Deskflow socket is attached");
+      }
+    }
+    if (m_codec.peerClosed()) {
+      Q_EMIT status(tr("Bluetooth peer closed the tunnel"));
+      dropTcp(tr("Bluetooth peer closed the tunnel"));
+      return;
+    }
+    // Decoding may have granted credit, so try to push pending data now.
+    flushToLink();
   }
-
-  // Decoding may have granted credit, so try to push pending data now.
-  flushToLink();
 }
 
 void BtRelay::onLinkWritable()

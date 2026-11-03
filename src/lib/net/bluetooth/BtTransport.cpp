@@ -31,7 +31,7 @@ BtTransport::~BtTransport()
   stop();
 }
 
-bool BtTransport::start(quint16 serverPort, QString *error, int timeoutMs)
+bool BtTransport::start(quint16 serverPort, QString *error, int timeoutMs /*= 20000*/)
 {
   if (m_impl != nullptr) {
     return m_running;
