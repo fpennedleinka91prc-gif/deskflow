@@ -7,6 +7,7 @@
 #include "net/bluetooth/BtRfcommLink.h"
 
 #include "base/Log.h"
+#include "net/bluetooth/BtTypes.h"
 
 #include <QTimer>
 
@@ -19,11 +20,19 @@ namespace deskflow::net::bt {
 
 namespace {
 
-//! Channels tried when SDP does not name a serial port.
-constexpr BluetoothRFCOMMChannelID kCandidateChannels[] = {1, 2, 3, 4, 5, 6};
+//! Raw bytes of \c kServiceUuid, the UUID Windows publishes its serial port under.
+constexpr unsigned char kDeskflowServiceUuidBytes[16] = {0x3f, 0x2a, 0x7c, 0x1e, 0x9b, 0x64, 0x4d, 0x58,
+                                                         0x8a, 0x11, 0x6c, 0x0d, 0x5e, 0x7b, 0x9f, 0x20};
 
 //! Chunk size for RFCOMM payloads; the link itself can carry more.
 constexpr int kRfcommMaxChunk = 512;
+
+//! How long to wait for the channel open callback before reporting a failure.
+constexpr int kChannelOpenTimeoutMs = 15000;
+
+//! SDP runs in the background, so the Deskflow record can be missing on the first look.
+constexpr int kSdpAttempts = 5;
+constexpr int kSdpRetryMs = 1000;
 
 } // namespace
 
@@ -42,6 +51,17 @@ name brought in by the using-declaration above.
 @end
 
 @implementation DeskflowRfcommDelegate
+
+- (void)rfcommChannelOpenComplete:(IOBluetoothRFCOMMChannel *)channel status:(IOReturn)error
+{
+  if (self.owner != nullptr) {
+    // The channel is handed over already retained; the link adopts it only when
+    // the open reports success, so a rejected attempt cannot leak it.
+    static_cast<BtRfcommLink *>(self.owner)->handleChannelOpenStatus(
+        static_cast<int>(error), (__bridge void *)channel
+    );
+  }
+}
 
 - (void)rfcommChannelData:(IOBluetoothRFCOMMChannel *)channel data:(void *)dataPointer length:(size_t)dataLength
 {
@@ -77,15 +97,20 @@ public:
   IOBluetoothRFCOMMChannel *channel = nil;
   DeskflowRfcommDelegate *delegate = nil;
   QTimer *retryTimer = nullptr;
+  QTimer *openTimer = nullptr;
 
   bool running = false;
   bool connected = false;
   bool connecting = false;
+  int sdpAttempt = 0;
   QString peerLabel;
 
   IOBluetoothDevice *findPairedDevice(const QString &wanted);
+  IOBluetoothSDPServiceRecord *findDeskflowRecord();
   void connectPeer();
+  void discoverAndOpen();
   void openChannel(BluetoothRFCOMMChannelID channelId);
+  void onChannelOpenFinished(int status, void *openedChannel);
   void markConnected();
   void onAttemptFailed(const QString &reason);
 };
@@ -112,6 +137,19 @@ BtRfcommLink::BtRfcommLink(QObject *parent) : IBtLink(parent), d(new Private)
     if (d->running && !d->connected && d->mode == Mode::Client) {
       d->connectPeer();
     }
+  });
+
+  d->openTimer = new QTimer(this);
+  d->openTimer->setSingleShot(true);
+  connect(d->openTimer, &QTimer::timeout, this, [this] {
+    if (!d->running || d->connected) {
+      return;
+    }
+    // macOS can accept the open request and never call back, so the only way
+    // out of "connecting" is this timer.
+    LOG_WARN("bluetooth/rfcomm: the channel open timed out after %d ms", kChannelOpenTimeoutMs);
+    d->connecting = false;
+    d->onAttemptFailed(QStringLiteral("The other computer did not accept the Bluetooth connection."));
   });
 #endif
 }
@@ -162,6 +200,9 @@ void BtRfcommLink::stop()
   d->connecting = false;
   if (d->retryTimer != nullptr) {
     d->retryTimer->stop();
+  }
+  if (d->openTimer != nullptr) {
+    d->openTimer->stop();
   }
   if (d->channel != nil) {
     @autoreleasepool {
@@ -226,6 +267,11 @@ QString BtRfcommLink::describe() const
 
 #ifdef __APPLE__
 
+void BtRfcommLink::handleChannelOpenStatus(int status, void *openedChannel)
+{
+  d->onChannelOpenFinished(status, openedChannel);
+}
+
 IOBluetoothDevice *BtRfcommLink::Private::findPairedDevice(const QString &wanted)
 {
   @autoreleasepool {
@@ -261,6 +307,33 @@ IOBluetoothDevice *BtRfcommLink::Private::findPairedDevice(const QString &wanted
   }
 }
 
+IOBluetoothSDPServiceRecord *BtRfcommLink::Private::findDeskflowRecord()
+{
+  if (device == nil) {
+    return nil;
+  }
+
+  @autoreleasepool {
+    // Match on the service class UUID Windows publishes.  Taking "the first
+    // record that has an RFCOMM channel" picks one of the computer's own
+    // services (audio, HID, ...) and fails on a channel that is not ours.
+    IOBluetoothSDPUUID *uuid =
+        [IOBluetoothSDPUUID uuidWithBytes:kDeskflowServiceUuidBytes length:sizeof(kDeskflowServiceUuidBytes)];
+    IOBluetoothSDPServiceRecord *record = [device getServiceRecordForUUID:uuid];
+    if (record != nil) {
+      return record;
+    }
+
+    // A record published by an older build may carry only the service name.
+    for (IOBluetoothSDPServiceRecord *candidate in [device services]) {
+      if ([[candidate getServiceName] isEqualToString:@"Deskflow"]) {
+        return candidate;
+      }
+    }
+    return nil;
+  }
+}
+
 void BtRfcommLink::Private::connectPeer()
 {
   if (!running || connected || connecting) {
@@ -286,6 +359,7 @@ void BtRfcommLink::Private::connectPeer()
   LOG_INFO("bluetooth/rfcomm: using paired device \"%s\"", qPrintable(peerLabel));
 
   connecting = true;
+  sdpAttempt = 0;
 
   @autoreleasepool {
     if (![device isConnected]) {
@@ -294,7 +368,7 @@ void BtRfcommLink::Private::connectPeer()
     }
   }
 
-  // Let the baseband link come up, then look for a serial port channel.
+  // Let the baseband link come up, then look for the Deskflow service.
   QTimer::singleShot(2000, q, [this] {
     if (!running || connected) {
       return;
@@ -304,40 +378,52 @@ void BtRfcommLink::Private::connectPeer()
       onAttemptFailed(QStringLiteral("The Bluetooth link to the other computer did not come up."));
       return;
     }
-
-    BluetoothRFCOMMChannelID discovered = 0;
-    @autoreleasepool {
-      [device performSDPQuery:nil];
-      for (IOBluetoothSDPServiceRecord *record in [device services]) {
-        if ([record getRFCOMMChannelID:&discovered] == kIOReturnSuccess && discovered > 0) {
-          break;
-        }
-      }
-    }
-
-    if (discovered > 0) {
-      LOG_DEBUG("bluetooth/rfcomm: SDP reports channel %d", static_cast<int>(discovered));
-      openChannel(discovered);
-      if (connected) {
-        return;
-      }
-    }
-
-    for (BluetoothRFCOMMChannelID candidate : kCandidateChannels) {
-      if (connected || !running) {
-        break;
-      }
-      openChannel(candidate);
-    }
-
-    if (!connected) {
-      connecting = false;
-      onAttemptFailed(
-          QStringLiteral("No Bluetooth data channel could be opened. The other computer must offer a serial port "
-                         "service (Windows Deskflow does; macOS cannot).")
-      );
-    }
+    discoverAndOpen();
   });
+}
+
+void BtRfcommLink::Private::discoverAndOpen()
+{
+  if (!running || connected || device == nil) {
+    return;
+  }
+
+  @autoreleasepool {
+    if (sdpAttempt == 0) {
+      // Starts the exchange; the records land in the cache asynchronously, so the
+      // lookups below are repeated on a timer rather than back to back.
+      [device performSDPQuery:nil];
+    }
+
+    IOBluetoothSDPServiceRecord *record = findDeskflowRecord();
+    if (record == nil && ++sdpAttempt < kSdpAttempts) {
+      LOG_DEBUG("bluetooth/rfcomm: the Deskflow service is not in the SDP cache yet (attempt %d)", sdpAttempt);
+      QTimer::singleShot(kSdpRetryMs, q, [this] { discoverAndOpen(); });
+      return;
+    }
+
+    if (record == nil) {
+      connecting = false;
+      LOG_WARN("bluetooth/rfcomm: \"%s\" publishes no Deskflow service", qPrintable(peerLabel));
+      onAttemptFailed(
+          QStringLiteral("The other computer does not publish a Deskflow Bluetooth service. Start Deskflow there "
+                         "with the Bluetooth transport enabled.")
+      );
+      return;
+    }
+
+    BluetoothRFCOMMChannelID channelId = 0;
+    const IOReturn rc = [record getRFCOMMChannelID:&channelId];
+    if (rc != kIOReturnSuccess || channelId == 0) {
+      connecting = false;
+      LOG_WARN("bluetooth/rfcomm: the Deskflow record carries no RFCOMM channel (0x%x)", rc);
+      onAttemptFailed(QStringLiteral("The other computer's Bluetooth service exposes no serial channel."));
+      return;
+    }
+
+    LOG_INFO("bluetooth/rfcomm: the Deskflow service is on channel %d, opening it", static_cast<int>(channelId));
+    openChannel(channelId);
+  }
 }
 
 void BtRfcommLink::Private::openChannel(BluetoothRFCOMMChannelID channelId)
@@ -353,18 +439,46 @@ void BtRfcommLink::Private::openChannel(BluetoothRFCOMMChannelID channelId)
     }
 
     IOBluetoothRFCOMMChannel *opened = nil;
-    const IOReturn rc = [device openRFCOMMChannelSync:&opened withChannelID:channelId delegate:(id)delegate];
-    if (rc == kIOReturnSuccess && opened != nil && [opened isOpen]) {
-      LOG_INFO(
-          "bluetooth/rfcomm: channel %d is open, the link to \"%s\" is up", static_cast<int>(channelId),
-          qPrintable(peerLabel)
+    const IOReturn rc = [device openRFCOMMChannelAsync:&opened withChannelID:channelId delegate:(id)delegate];
+    if (rc != kIOReturnSuccess) {
+      connecting = false;
+      LOG_WARN("bluetooth/rfcomm: cannot start opening channel %d (0x%x)", static_cast<int>(channelId), rc);
+      onAttemptFailed(
+          QStringLiteral("The Bluetooth serial channel could not be opened (error 0x%1).").arg(rc, 0, 16)
       );
-      channel = opened;
-      markConnected();
-    } else {
-      LOG_DEBUG("bluetooth/rfcomm: channel %d not usable (0x%x)", static_cast<int>(channelId), rc);
+      return;
+    }
+
+    if (openTimer != nullptr) {
+      openTimer->start(kChannelOpenTimeoutMs);
     }
   }
+}
+
+void BtRfcommLink::Private::onChannelOpenFinished(int status, void *openedChannel)
+{
+  if (openTimer != nullptr) {
+    openTimer->stop();
+  }
+  if (!running || connected) {
+    return;
+  }
+
+  if (status == kIOReturnSuccess && openedChannel != nullptr) {
+    // Assigning to the strong member adopts the channel, so the completion
+    // callback can let it go.
+    channel = (__bridge IOBluetoothRFCOMMChannel *)openedChannel;
+    LOG_INFO("bluetooth/rfcomm: the link to \"%s\" is up (MTU %u)", qPrintable(peerLabel), [channel getMTU]);
+    connecting = false;
+    markConnected();
+    return;
+  }
+
+  connecting = false;
+  LOG_WARN("bluetooth/rfcomm: the channel open failed (0x%x)", static_cast<unsigned>(status));
+  onAttemptFailed(
+      QStringLiteral("The Bluetooth serial channel was refused (error 0x%1).").arg(static_cast<unsigned>(status), 0, 16)
+  );
 }
 
 void BtRfcommLink::Private::markConnected()

@@ -27,9 +27,9 @@ codec and the tests work unchanged.
 
 Roles are the usual surroundings of Deskflow: the server (the computer that
 owns the keyboard and mouse) opens a listening RFCOMM channel, the client opens
-the paired device's channel.  The channel is discovered through SDP, falling
-back to a small list of common channel numbers because not every peer publishes
-its serial port service.
+the paired device's channel.  The channel is discovered through SDP by matching
+the Deskflow service UUID, so a computer that publishes several serial services
+cannot be mistaken for the peer.
 */
 class BtRfcommLink : public IBtLink
 {
@@ -47,6 +47,11 @@ public:
   int maxChunkSize() const override;
   bool sendChunk(const QByteArray &chunk) override;
   QString describe() const override;
+
+#ifdef __APPLE__
+  //! Called by the Objective-C RFCOMM delegate; \c channel is an opaque \c IOBluetoothRFCOMMChannel.
+  void handleChannelOpenStatus(int status, void *channel);
+#endif
 
 private:
   class Private;

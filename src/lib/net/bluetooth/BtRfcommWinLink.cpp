@@ -136,11 +136,13 @@ public:
   bool running = false;
   bool connected = false;
   bool published = false;
+  int publishedChannel = 0;
   QString peerLabel;
 
   QTimer *retryTimer = nullptr;
   QTimer *acceptTimer = nullptr;
   QTimer *readTimer = nullptr;
+  QTimer *statusTimer = nullptr;
 
   bool publishService();
   void acceptLoop();
@@ -175,6 +177,32 @@ BtRfcommWinLink::BtRfcommWinLink(QObject *parent) : IBtLink(parent), d(new Priva
   d->readTimer = new QTimer(this);
   d->readTimer->setInterval(10);
   connect(d->readTimer, &QTimer::timeout, this, [this] { d->readLoop(); });
+
+  // While waiting for the other computer, repeat which channel is really bound.
+  // If that ever differs from the channel the SDP record advertises, the peer
+  // connects to a channel nobody listens on, which fails silently on its side.
+  d->statusTimer = new QTimer(this);
+  d->statusTimer->setInterval(10000);
+  connect(d->statusTimer, &QTimer::timeout, this, [this] {
+    if (!d->running || d->connected || d->listenSocket == INVALID_SOCKET) {
+      return;
+    }
+
+    SOCKADDR_BTH live{};
+    int length = sizeof(live);
+    int liveChannel = -1;
+    if (::getsockname(d->listenSocket, reinterpret_cast<SOCKADDR *>(&live), &length) != SOCKET_ERROR) {
+      liveChannel = static_cast<int>(live.port);
+    }
+
+    LOG_INFO(
+        "bluetooth/rfcomm: still waiting for the paired computer (bound channel %d, advertised channel %d)%s",
+        liveChannel, d->publishedChannel,
+        (liveChannel > 0 && d->publishedChannel > 0 && liveChannel != d->publishedChannel)
+            ? " - MISMATCH: the SDP record points at another channel"
+            : ""
+    );
+  });
 }
 
 BtRfcommWinLink::~BtRfcommWinLink()
@@ -231,6 +259,7 @@ bool BtRfcommWinLink::Private::publishService()
     return false;
   }
   LOG_INFO("bluetooth/rfcomm: RFCOMM listen succeeded");
+  listenSocket = socket;
 
   // Publish the service so the peer's SDP query finds it.
   SOCKADDR_BTH bound{};
@@ -261,6 +290,16 @@ bool BtRfcommWinLink::Private::publishService()
   query.dwNumberOfCsAddrs = 1;
   query.lpcsaBuffer = &serviceInfo;
 
+  // A record left behind by an earlier run keeps its old channel and shadows the
+  // live socket, so clear it before publishing the new one.
+  WSAQUERYSET stale{};
+  stale.dwNameSpace = NS_BTH;
+  stale.dwSize = sizeof(stale);
+  stale.lpServiceClassId = const_cast<GUID *>(&kServiceGuid);
+  if (::WSASetService(&stale, RNRSERVICE_DELETE, 0) != SOCKET_ERROR) {
+    LOG_INFO("bluetooth/rfcomm: removed a previously registered Deskflow SDP record");
+  }
+
   LOG_INFO("bluetooth/rfcomm: registering Deskflow service via WSASetService (SDP)...");
   if (::WSASetService(&query, RNRSERVICE_REGISTER, 0) == SOCKET_ERROR) {
     const int err = WSAGetLastError();
@@ -269,17 +308,20 @@ bool BtRfcommWinLink::Private::publishService()
     // Not fatal: the socket still listens, the peer just will not see it in SDP.
   } else {
     published = true;
+    publishedChannel = static_cast<int>(bound.port);
     LOG_INFO("bluetooth/rfcomm: SDP service successfully registered for Deskflow (GUID {3f2a7c1e-9b64-4d58-8a11-6c0d5e7b9f20}) on RFCOMM channel %d",
              static_cast<int>(bound.port));
   }
 
-  listenSocket = socket;
   u_long nonBlocking = 1;
   ::ioctlsocket(listenSocket, FIONBIO, &nonBlocking);
   LOG_INFO(
       "bluetooth/rfcomm: listening on RFCOMM channel %d, waiting for incoming connection from paired computer",
       static_cast<int>(bound.port)
   );
+  if (statusTimer != nullptr) {
+    statusTimer->start();
+  }
   return true;
 }
 
@@ -314,6 +356,9 @@ void BtRfcommWinLink::Private::acceptLoop()
   dataSocket = client;
   if (acceptTimer != nullptr) {
     acceptTimer->stop();
+  }
+  if (statusTimer != nullptr) {
+    statusTimer->stop();
   }
   markConnected();
 }
@@ -442,6 +487,9 @@ void BtRfcommWinLink::Private::markDisconnected(const QString &reason)
 
 void BtRfcommWinLink::Private::cleanup()
 {
+  if (statusTimer != nullptr) {
+    statusTimer->stop();
+  }
   if (dataSocket != INVALID_SOCKET) {
     LOG_INFO("bluetooth/rfcomm: closing data socket");
     ::closesocket(dataSocket);
