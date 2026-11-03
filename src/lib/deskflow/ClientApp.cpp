@@ -297,6 +297,17 @@ Client *ClientApp::openClient(const std::string &name, const NetworkAddress &add
 {
   auto *client = new Client(getEvents(), name, address, getSocketFactory(), computer);
 
+  // A Bluetooth tunnel cannot complete TCP + TLS + protocol handshake in the
+  // 2 s LAN budget: the RFCOMM link is chunked with credit based flow control
+  // and its first write can be deferred until the channel is really open.
+  // Ask the transport that is actually running, not a setting, so a CLI
+  // launched session gets the same budget as a GUI one.
+  if (m_btTransport != nullptr && m_btTransport->isRunning()) {
+    constexpr double kBluetoothConnectTimeout = 10.0;
+    client->setConnectTimeout(kBluetoothConnectTimeout);
+    LOG_INFO("client: Bluetooth transport in use, connect timeout is %.0f s", kBluetoothConnectTimeout);
+  }
+
   try {
     getEvents()->addHandler(EventTypes::ClientConnected, client->getEventTarget(), [this](const auto &) {
       handleClientConnected();

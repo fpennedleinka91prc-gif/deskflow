@@ -34,6 +34,49 @@ constexpr int kChannelOpenTimeoutMs = 15000;
 constexpr int kSdpAttempts = 5;
 constexpr int kSdpRetryMs = 1000;
 
+//! Delay before offering the link writable() again after a rejected write.
+/*!
+IOBluetooth rejects a write with \c kIOReturnNotOpen while the channel is still
+being opened by the remote stack, so a failed write is retried rather than
+treated as a dead link.
+*/
+constexpr int kWriteRetryMs = 50;
+
+//! Consecutive rejected writes (about kWriteRetryMs each) before the channel is
+//! considered stale and the link is re-established.
+constexpr int kWriteFailuresBeforeReconnect = 60;
+
+//! Human readable name for the IOReturn values the write path can produce.
+const char *iorReturnName(IOReturn rc)
+{
+  switch (rc) {
+  case kIOReturnSuccess:
+    return "kIOReturnSuccess";
+  case kIOReturnError:
+    return "kIOReturnError";
+  case kIOReturnNoDevice:
+    return "kIOReturnNoDevice";
+  case kIOReturnBadArgument:
+    return "kIOReturnBadArgument";
+  case kIOReturnUnsupported:
+    return "kIOReturnUnsupported";
+  case kIOReturnIOError:
+    return "kIOReturnIOError";
+  case kIOReturnNotOpen:
+    return "kIOReturnNotOpen";
+  case kIOReturnNotReadable:
+    return "kIOReturnNotReadable";
+  case kIOReturnNotWritable:
+    return "kIOReturnNotWritable";
+  case kIOReturnAborted:
+    return "kIOReturnAborted";
+  case kIOReturnNotFound:
+    return "kIOReturnNotFound";
+  default:
+    return "unknown IOReturn";
+  }
+}
+
 } // namespace
 
 } // namespace deskflow::net::bt
@@ -103,6 +146,11 @@ public:
   bool connecting = false;
   int sdpAttempt = 0;
   QString peerLabel;
+
+  //! Last IOReturn a write was rejected with; a repeated value is logged once.
+  IOReturn lastWriteError = kIOReturnSuccess;
+  quint64 writeFailures = 0;
+  bool writePending = false;
 
   IOBluetoothDevice *findPairedDevice(const QString &wanted);
   IOBluetoothSDPServiceRecord *findDeskflowRecord();
@@ -239,9 +287,48 @@ bool BtRfcommLink::sendChunk(const QByteArray &chunk)
                                         length:static_cast<NSUInteger>(chunk.size())
                                         refcon:nullptr];
     if (rc != kIOReturnSuccess) {
-      LOG_WARN("bluetooth/rfcomm: write failed (0x%x)", rc);
+      // kIOReturnNotOpen means the channel exists but the open is not finished
+      // yet (the remote stack accepts a few milliseconds later).  Handing the
+      // bytes back and asking the relay to retry is correct; failing the whole
+      // connection over one rejected write is not.  Log only when the error
+      // changes so a spinning retry cannot flood the log.
+      if (rc != d->lastWriteError) {
+        d->lastWriteError = rc;
+        LOG_WARN(
+            "bluetooth/rfcomm: write deferred (%s 0x%x), retrying every %d ms (mtu %u, failures %llu)",
+            deskflow::net::bt::iorReturnName(rc), static_cast<unsigned>(rc), kWriteRetryMs,
+            [d->channel getMTU], d->writeFailures
+        );
+      } else {
+        LOG_DEBUG(
+            "bluetooth/rfcomm: write still deferred (%s 0x%x, failures %llu)",
+            deskflow::net::bt::iorReturnName(rc), static_cast<unsigned>(rc), d->writeFailures
+        );
+      }
+      if (++d->writeFailures >= kWriteFailuresBeforeReconnect) {
+        // The channel has been unwritable for about 3 s: it is stale (the peer
+        // restarted and IOBluetooth has not reported the close yet).  Tear it
+        // down so the normal reconnect path runs.
+        LOG_WARN("bluetooth/rfcomm: the channel stayed unwritable for %llu attempts, reconnecting",
+                 d->writeFailures);
+        d->writeFailures = 0;
+        d->lastWriteError = kIOReturnSuccess;
+        QTimer::singleShot(0, this, [this] { handleChannelClosed(); });
+        return false;
+      }
+      if (!d->writePending) {
+        d->writePending = true;
+        QTimer::singleShot(kWriteRetryMs, this, [this] {
+          d->writePending = false;
+          if (d->connected) {
+            Q_EMIT writable();
+          }
+        });
+      }
       return false;
     }
+    d->lastWriteError = kIOReturnSuccess;
+    d->writeFailures = 0;
     // RFCOMM carries its own credits, so an accepted write is the flow control.
     QTimer::singleShot(0, this, [this] { Q_EMIT writable(); });
     return true;
@@ -506,8 +593,18 @@ void BtRfcommLink::Private::markConnected()
   if (retryTimer != nullptr) {
     retryTimer->stop();
   }
-  Q_EMIT q->connected();
-  Q_EMIT q->writable();
+  // Report the link from the event loop, never from inside IOBluetooth's
+  // rfcommChannelOpenComplete callback: the relay writes the protocol hello
+  // synchronously on connected(), and IOBluetooth rejects that write with
+  // kIOReturnNotOpen (0xe00002cd) while the callback is still on the stack.
+  QTimer::singleShot(0, q, [this] {
+    if (!connected) {
+      return;
+    }
+    LOG_DEBUG("bluetooth/rfcomm: channel ready, reporting the link to the relay (mtu %u)", [channel getMTU]);
+    Q_EMIT q->connected();
+    Q_EMIT q->writable();
+  });
 }
 
 void BtRfcommLink::Private::onAttemptFailed(const QString &reason)

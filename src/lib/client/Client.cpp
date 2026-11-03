@@ -498,16 +498,23 @@ bool Client::setupComputer(int16_t protocolMinor)
   return m_server != nullptr;
 }
 
+void Client::setConnectTimeout(double seconds)
+{
+  if (seconds > 0.0) {
+    m_connectTimeout = seconds;
+  }
+}
+
 void Client::setupTimer()
 {
   assert(m_timer == nullptr);
-  // A Bluetooth tunnel needs far longer than a LAN connection: the TLS
-  // handshake is chunked over a slow RFCOMM link with credit based flow
-  // control, so several round trips can easily exceed the normal timeout.
-  const bool bluetooth = qEnvironmentVariableIsSet("DESKFLOW_BT_ENABLED")
-                             ? qEnvironmentVariableIntValue("DESKFLOW_BT_ENABLED") != 0
-                             : Settings::value(Settings::Bluetooth::Enabled).toBool();
-  m_timer = m_events->newOneShotTimer(bluetooth ? 10.0 : 2.0, nullptr);
+  // The timer covers TCP connect plus the TLS and protocol handshake.  A
+  // Bluetooth tunnel is much slower than a LAN connection: the handshake is
+  // chunked over RFCOMM with credit based flow control and several round
+  // trips, so the caller raises this budget while the Bluetooth transport is
+  // in use (see ClientApp::openClient).
+  LOG_DEBUG("client: connect timeout is %.2f s", m_connectTimeout);
+  m_timer = m_events->newOneShotTimer(m_connectTimeout, nullptr);
   m_events->addHandler(EventTypes::Timer, m_timer, [this](const auto &) { handleConnectTimeout(); });
 }
 

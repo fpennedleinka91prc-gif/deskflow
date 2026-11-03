@@ -113,6 +113,13 @@ public:
   void connect(size_t addressIndex = 0);
   void setServerAddress(const NetworkAddress &address);
 
+  //! Override the connect/handshake timeout in seconds (default 2).
+  /*!
+  The timer covers TCP connect plus the TLS and protocol handshake.  A tunnel
+  with a high latency link (Bluetooth RFCOMM) needs a far longer budget.
+  */
+  void setConnectTimeout(double seconds);
+
   //! Disconnect
   /*!
   Disconnects from the server with an optional error message.
@@ -244,4 +251,6 @@ private:
   int32_t m_relativeRestoreY = 0;
   size_t m_maximumClipboardSize = INT_MAX;
   size_t m_resolvedAddressesCount = 0;
+  //! Seconds allowed for connect + handshake before the attempt is failed.
+  double m_connectTimeout = 2.0;
 };
