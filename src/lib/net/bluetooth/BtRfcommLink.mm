@@ -10,6 +10,11 @@
 #include "net/bluetooth/BtTypes.h"
 
 #include <QTimer>
+#include <QStringList>
+#include <QVector>
+
+#include <algorithm>
+#include <atomic>
 
 #ifdef __APPLE__
 
@@ -29,6 +34,10 @@ constexpr int kRfcommMaxChunk = 512;
 
 //! How long to wait for the channel open callback before reporting a failure.
 constexpr int kChannelOpenTimeoutMs = 15000;
+
+//! How long a freshly opened channel may stay silent before it is considered a
+//! stale record (the peer advertised it, but nothing is listening on it).
+constexpr int kPeerDataTimeoutMs = 3500;
 
 //! SDP runs in the background, so the Deskflow record can be missing on the first look.
 constexpr int kSdpAttempts = 5;
@@ -119,6 +128,8 @@ name brought in by the using-declaration above.
   (void)channel;
   if (self.owner != nullptr && dataPointer != nullptr && dataLength > 0) {
     auto *link = static_cast<BtRfcommLink *>(self.owner);
+    // Any inbound byte proves the advertised channel really reaches the peer.
+    link->handlePeerData();
     const QByteArray chunk(static_cast<const char *>(dataPointer), static_cast<int>(dataLength));
     Q_EMIT link->chunkReceived(chunk);
   }
@@ -159,16 +170,33 @@ public:
   bool channelOpening = false;
   QString peerLabel;
 
+  //! RFCOMM channels of every Deskflow record the peer advertises, newest first.
+  /*!
+  Windows keeps SDP records of earlier runs alive, so the peer can advertise
+  several Deskflow records at different channels; one of them is stale.  They
+  are tried in order until one of them actually answers.
+  */
+  QVector<int> candidates;
+  int candidateIndex = -1;
+  //! Channel of the open request currently in flight (the channel object does
+  //! not expose its own channel id).
+  int pendingChannel = -1;
+  //! Set until the peer sends its first bytes on the channel that was just opened.
+  std::atomic<bool> awaitingPeer{false};
+  QTimer *peerDataTimer = nullptr;
+
   //! Last IOReturn a write was rejected with; a repeated value is logged once.
   IOReturn lastWriteError = kIOReturnSuccess;
   quint64 writeFailures = 0;
   bool writePending = false;
 
   IOBluetoothDevice *findPairedDevice(const QString &wanted);
-  IOBluetoothSDPServiceRecord *findDeskflowRecord();
+  QVector<int> deskflowChannels();
   void connectPeer();
   void discoverAndOpen();
   void openChannel(BluetoothRFCOMMChannelID channelId);
+  void openNextCandidate(const QString &reason);
+  void onPeerSilent();
   void onChannelOpenFinished(int status, void *openedChannel);
   void markConnected();
   void onAttemptFailed(const QString &reason);
@@ -207,9 +235,12 @@ BtRfcommLink::BtRfcommLink(QObject *parent) : IBtLink(parent), d(new Private)
     // macOS can accept the open request and never call back, so the only way
     // out of "connecting" is this timer.
     LOG_WARN("bluetooth/rfcomm: the channel open timed out after %d ms", kChannelOpenTimeoutMs);
-    d->connecting = false;
-    d->onAttemptFailed(QStringLiteral("The other computer did not accept the Bluetooth connection."));
+    d->openNextCandidate(QStringLiteral("the channel open timed out"));
   });
+
+  d->peerDataTimer = new QTimer(this);
+  d->peerDataTimer->setSingleShot(true);
+  connect(d->peerDataTimer, &QTimer::timeout, this, [this] { d->onPeerSilent(); });
 #endif
 }
 
@@ -257,11 +288,17 @@ void BtRfcommLink::stop()
 #ifdef __APPLE__
   d->running = false;
   d->connecting = false;
+  d->awaitingPeer = false;
+  d->candidates.clear();
+  d->candidateIndex = -1;
   if (d->retryTimer != nullptr) {
     d->retryTimer->stop();
   }
   if (d->openTimer != nullptr) {
     d->openTimer->stop();
+  }
+  if (d->peerDataTimer != nullptr) {
+    d->peerDataTimer->stop();
   }
   if (d->channel != nil) {
     @autoreleasepool {
@@ -389,6 +426,18 @@ void BtRfcommLink::handleSdpQueryComplete(int status)
   });
 }
 
+void BtRfcommLink::handlePeerData()
+{
+  // Runs on an IOBluetooth thread: only clear the flag here, the timer has to
+  // be stopped on the event loop thread.
+  d->awaitingPeer = false;
+  QTimer::singleShot(0, this, [this] {
+    if (d->peerDataTimer != nullptr) {
+      d->peerDataTimer->stop();
+    }
+  });
+}
+
 void BtRfcommLink::handleChannelClosed()
 {
   if (!d->running || !d->connected) {
@@ -400,6 +449,7 @@ void BtRfcommLink::handleChannelClosed()
   d->connected = false;
   d->connecting = false;
   d->channelOpening = false;
+  d->awaitingPeer = false;
   d->channel = nil;
   d->device = nil;
   LOG_INFO("bluetooth/rfcomm: the data channel closed");
@@ -441,56 +491,64 @@ IOBluetoothDevice *BtRfcommLink::Private::findPairedDevice(const QString &wanted
   }
 }
 
-IOBluetoothSDPServiceRecord *BtRfcommLink::Private::findDeskflowRecord()
+QVector<int> BtRfcommLink::Private::deskflowChannels()
 {
+  QVector<int> channels;
   if (device == nil) {
-    return nil;
+    return channels;
   }
 
   @autoreleasepool {
-    // Windows keeps the SDP entries of earlier runs, so the device can publish
-    // more than one Deskflow record: a stale one (channel 1) and the live one
-    // (channel 3).  Opening the stale record succeeds against the computer's own
-    // serial service and silently black-holes the traffic, so pick the newest
-    // record - the SDP server hands out increasing handles.
-    IOBluetoothSDPServiceRecord *newest = nil;
-    BluetoothSDPServiceRecordHandle newestHandle = 0;
-    int matches = 0;
+    // The peer can advertise more than one Deskflow record: Windows keeps a
+    // record of an earlier run alive, and it points at the channel that run was
+    // bound to.  Collect every channel instead of trusting one record, so a
+    // stale entry can be skipped when it does not answer.
+    struct Found
+    {
+      BluetoothSDPServiceRecordHandle handle;
+      int channel;
+    };
+    QVector<Found> records;
 
     for (IOBluetoothSDPServiceRecord *candidate in [device services]) {
       BluetoothSDPServiceRecordHandle candidateHandle = 0;
       BluetoothRFCOMMChannelID candidateChannel = 0;
       [candidate getServiceRecordHandle:&candidateHandle];
-      [candidate getRFCOMMChannelID:&candidateChannel];
+      const IOReturn rc = [candidate getRFCOMMChannelID:&candidateChannel];
       NSString *candidateName = [candidate getServiceName];
       LOG_DEBUG(
-          "bluetooth/rfcomm: SDP service \"%s\" handle=%u rfcomm=%d", candidateName != nil ? [candidateName UTF8String] : "",
-          static_cast<unsigned>(candidateHandle), static_cast<int>(candidateChannel)
+          "bluetooth/rfcomm: SDP service \"%s\" handle=%u rfcomm=%d (0x%x)",
+          candidateName != nil ? [candidateName UTF8String] : "", static_cast<unsigned>(candidateHandle),
+          static_cast<int>(candidateChannel), static_cast<unsigned>(rc)
       );
-      if (![candidateName isEqualToString:@"Deskflow"]) {
+      if (![candidateName isEqualToString:@"Deskflow"] || rc != kIOReturnSuccess || candidateChannel == 0) {
         continue;
       }
-      const IOReturn rc = [candidate getServiceRecordHandle:&candidateHandle];
-      ++matches;
-      LOG_DEBUG(
-          "bluetooth/rfcomm: Deskflow SDP record %d: handle=%u channel=%d (0x%x)", matches,
-          static_cast<unsigned>(candidateHandle), static_cast<int>(candidateChannel), static_cast<unsigned>(rc)
-      );
-      if (newest == nil || (rc == kIOReturnSuccess && candidateHandle >= newestHandle)) {
-        newest = candidate;
-        newestHandle = candidateHandle;
+      records.append({candidateHandle, static_cast<int>(candidateChannel)});
+    }
+
+    // The SDP server hands out increasing handles, so the highest one is the
+    // record the peer registered last - try it first, then the older ones.
+    std::sort(records.begin(), records.end(), [](const Found &a, const Found &b) { return a.handle > b.handle; });
+    for (const auto &record : records) {
+      if (!channels.contains(record.channel)) {
+        channels.append(record.channel);
       }
     }
 
-    if (newest != nil) {
-      return newest;
+    if (channels.isEmpty()) {
+      // A record published by an older build may carry no name.
+      IOBluetoothSDPUUID *uuid =
+          [IOBluetoothSDPUUID uuidWithBytes:kDeskflowServiceUuidBytes length:sizeof(kDeskflowServiceUuidBytes)];
+      IOBluetoothSDPServiceRecord *record = [device getServiceRecordForUUID:uuid];
+      BluetoothRFCOMMChannelID channelId = 0;
+      if (record != nil && [record getRFCOMMChannelID:&channelId] == kIOReturnSuccess && channelId != 0) {
+        channels.append(static_cast<int>(channelId));
+      }
     }
-
-    // A record published by an older build may carry no name.
-    IOBluetoothSDPUUID *uuid =
-        [IOBluetoothSDPUUID uuidWithBytes:kDeskflowServiceUuidBytes length:sizeof(kDeskflowServiceUuidBytes)];
-    return [device getServiceRecordForUUID:uuid];
   }
+
+  return channels;
 }
 
 void BtRfcommLink::Private::connectPeer()
@@ -521,6 +579,8 @@ void BtRfcommLink::Private::connectPeer()
   sdpAttempt = 0;
   sdpQueryFinished = false;
   channelOpening = false;
+  candidates.clear();
+  candidateIndex = -1;
 
   @autoreleasepool {
     if (![device isConnected]) {
@@ -572,14 +632,14 @@ void BtRfcommLink::Private::discoverAndOpen()
       LOG_WARN("bluetooth/rfcomm: the SDP query did not finish, falling back to the cached records");
     }
 
-    IOBluetoothSDPServiceRecord *record = findDeskflowRecord();
-    if (record == nil && ++sdpAttempt < kSdpAttempts) {
+    candidates = deskflowChannels();
+    if (candidates.isEmpty() && ++sdpAttempt < kSdpAttempts) {
       LOG_DEBUG("bluetooth/rfcomm: the Deskflow service is not in the SDP cache yet (attempt %d)", sdpAttempt);
       QTimer::singleShot(kSdpRetryMs, q, [this] { discoverAndOpen(); });
       return;
     }
 
-    if (record == nil) {
+    if (candidates.isEmpty()) {
       connecting = false;
       LOG_WARN("bluetooth/rfcomm: \"%s\" publishes no Deskflow service", qPrintable(peerLabel));
       onAttemptFailed(
@@ -589,17 +649,19 @@ void BtRfcommLink::Private::discoverAndOpen()
       return;
     }
 
-    BluetoothRFCOMMChannelID channelId = 0;
-    const IOReturn rc = [record getRFCOMMChannelID:&channelId];
-    if (rc != kIOReturnSuccess || channelId == 0) {
-      connecting = false;
-      LOG_WARN("bluetooth/rfcomm: the Deskflow record carries no RFCOMM channel (0x%x)", rc);
-      onAttemptFailed(QStringLiteral("The other computer's Bluetooth service exposes no serial channel."));
-      return;
+    QStringList channels;
+    for (const int candidate : candidates) {
+      channels << QString::number(candidate);
     }
+    LOG_INFO(
+        "bluetooth/rfcomm: \"%s\" advertises %d Deskflow RFCOMM channel(s): %s", qPrintable(peerLabel),
+        static_cast<int>(candidates.size()), qPrintable(channels.join(QLatin1Char(',')))
+    );
 
-    LOG_INFO("bluetooth/rfcomm: the Deskflow service is on channel %d, opening it", static_cast<int>(channelId));
-    openChannel(channelId);
+    // Try every advertised channel in turn: one of them can belong to a stale
+    // SDP record of an earlier run, which accepts nothing.
+    candidateIndex = 0;
+    openChannel(candidates.at(candidateIndex));
   }
 }
 
@@ -610,6 +672,7 @@ void BtRfcommLink::Private::openChannel(BluetoothRFCOMMChannelID channelId)
   }
 
   channelOpening = true;
+  pendingChannel = static_cast<int>(channelId);
   @autoreleasepool {
     if (delegate == nil) {
       delegate = [[DeskflowRfcommDelegate alloc] init];
@@ -619,11 +682,10 @@ void BtRfcommLink::Private::openChannel(BluetoothRFCOMMChannelID channelId)
     IOBluetoothRFCOMMChannel *opened = nil;
     const IOReturn rc = [device openRFCOMMChannelAsync:&opened withChannelID:channelId delegate:(id)delegate];
     if (rc != kIOReturnSuccess) {
-      connecting = false;
       LOG_WARN("bluetooth/rfcomm: cannot start opening channel %d (0x%x)", static_cast<int>(channelId), rc);
-      onAttemptFailed(
-          QStringLiteral("The Bluetooth serial channel could not be opened (error 0x%1).").arg(rc, 0, 16)
-      );
+      openNextCandidate(QStringLiteral("channel %1 could not be opened (0x%2)")
+                            .arg(static_cast<int>(channelId))
+                            .arg(static_cast<unsigned>(rc), 0, 16));
       return;
     }
 
@@ -631,6 +693,75 @@ void BtRfcommLink::Private::openChannel(BluetoothRFCOMMChannelID channelId)
       openTimer->start(kChannelOpenTimeoutMs);
     }
   }
+}
+
+void BtRfcommLink::Private::openNextCandidate(const QString &reason)
+{
+  channelOpening = false;
+  if (openTimer != nullptr) {
+    openTimer->stop();
+  }
+
+  if (channel != nil) {
+    @autoreleasepool {
+      [channel closeChannel];
+    }
+    channel = nil;
+  }
+
+  ++candidateIndex;
+  if (!running || candidateIndex < 0 || candidateIndex >= static_cast<int>(candidates.size())) {
+    const int tried = static_cast<int>(candidates.size());
+    candidates.clear();
+    candidateIndex = -1;
+    connecting = false;
+    LOG_WARN("bluetooth/rfcomm: none of the %d advertised Deskflow channel(s) answered (last: %s)", tried, qPrintable(reason));
+    onAttemptFailed(
+        QStringLiteral("None of the Bluetooth serial channels advertised by the other computer accepted the "
+                       "connection. Restart Deskflow there so it re-registers its Bluetooth service.")
+    );
+    return;
+  }
+
+  const int next = candidates.at(candidateIndex);
+  LOG_INFO(
+      "bluetooth/rfcomm: %s, trying the next advertised channel %d (%d of %d)", qPrintable(reason), next,
+      candidateIndex + 1, static_cast<int>(candidates.size())
+  );
+  openChannel(static_cast<BluetoothRFCOMMChannelID>(next));
+}
+
+void BtRfcommLink::Private::onPeerSilent()
+{
+  if (!running || !connected || !awaitingPeer) {
+    return;
+  }
+  awaitingPeer = false;
+
+  int channelId = -1;
+  @autoreleasepool {
+    if (channel != nil) {
+      channelId = pendingChannel;
+    }
+  }
+  LOG_WARN(
+      "bluetooth/rfcomm: channel %d on \"%s\" accepted the connection but sent nothing within %d ms; it belongs to a "
+      "stale SDP record, trying the next channel",
+      channelId, qPrintable(peerLabel), kPeerDataTimeoutMs
+  );
+
+  // The channel is dead, but the peer is not: keep the attempt alive and move on
+  // to the next advertised channel instead of failing the whole connection.
+  connected = false;
+  connecting = true;
+  @autoreleasepool {
+    if (channel != nil) {
+      [channel closeChannel];
+    }
+  }
+  channel = nil;
+  Q_EMIT q->disconnected(QStringLiteral("no data on the advertised Bluetooth channel"));
+  openNextCandidate(QStringLiteral("channel %1 stayed silent").arg(channelId));
 }
 
 void BtRfcommLink::Private::onChannelOpenFinished(int status, void *openedChannel)
@@ -647,16 +778,19 @@ void BtRfcommLink::Private::onChannelOpenFinished(int status, void *openedChanne
     // Assigning to the strong member adopts the channel, so the completion
     // callback can let it go.
     channel = (__bridge IOBluetoothRFCOMMChannel *)openedChannel;
-    LOG_INFO("bluetooth/rfcomm: the link to \"%s\" is up (MTU %u)", qPrintable(peerLabel), [channel getMTU]);
+    LOG_INFO(
+        "bluetooth/rfcomm: opened channel %d of \"%s\" (MTU %u), verifying it with the peer's first bytes", pendingChannel,
+        qPrintable(peerLabel), [channel getMTU]
+    );
     connecting = false;
+    awaitingPeer = true;
     markConnected();
     return;
   }
 
-  connecting = false;
   LOG_WARN("bluetooth/rfcomm: the channel open failed (0x%x)", static_cast<unsigned>(status));
-  onAttemptFailed(
-      QStringLiteral("The Bluetooth serial channel was refused (error 0x%1).").arg(static_cast<unsigned>(status), 0, 16)
+  openNextCandidate(
+      QStringLiteral("the channel open was refused (0x%1)").arg(static_cast<unsigned>(status), 0, 16)
   );
 }
 
@@ -667,16 +801,23 @@ void BtRfcommLink::Private::markConnected()
   }
   connected = true;
   connecting = false;
-  if (retryTimer != nullptr) {
-    retryTimer->stop();
-  }
   // Report the link from the event loop, never from inside IOBluetooth's
   // rfcommChannelOpenComplete callback: the relay writes the protocol hello
   // synchronously on connected(), and IOBluetooth rejects that write with
   // kIOReturnNotOpen (0xe00002cd) while the callback is still on the stack.
+  // The timers are touched here too, again because the callback runs on an
+  // IOBluetooth thread.
   QTimer::singleShot(0, q, [this] {
+    if (retryTimer != nullptr) {
+      retryTimer->stop();
+    }
     if (!connected) {
       return;
+    }
+    if (awaitingPeer && peerDataTimer != nullptr) {
+      // A channel that opens but never carries a byte belongs to a stale SDP
+      // record; the timer is what catches that.
+      peerDataTimer->start(kPeerDataTimeoutMs);
     }
     LOG_DEBUG("bluetooth/rfcomm: channel ready, reporting the link to the relay (mtu %u)", [channel getMTU]);
     Q_EMIT q->connected();

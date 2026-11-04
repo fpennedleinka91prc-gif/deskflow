@@ -12,6 +12,8 @@
 
 #include <QTimer>
 #include <QString>
+#include <QStringList>
+#include <QVector>
 
 #include <cstring>
 
@@ -121,6 +123,20 @@ void logBluetoothRadiosAndDevices()
 
 } // namespace
 
+//! RFCOMM channels Deskflow listens on.
+/*!
+Windows keeps advertising SDP records left behind by an earlier run, and they
+point at the channel that run happened to be bound to.  Such a record cannot be
+deleted from another process (the only documented way to delete one is
+\c RNRSERVICE_DELETE with the address tuple - protocol plus port - that the
+publishing process used, see WSASetService), so instead of listening on one
+dynamically assigned channel this link listens on the low static channels as
+well.  A stale record then still lands on a live socket and the peer connects,
+even when the record itself survives.  Windows hands out dynamic channels
+starting at 1, so the low range covers the records earlier builds created.
+*/
+constexpr ULONG kPreferredChannels[] = {1, 2, 3, 4};
+
 class BtRfcommWinLink::Private
 {
 public:
@@ -128,15 +144,21 @@ public:
   Mode mode = Mode::Client;
   Config config;
 
-  SOCKET listenSocket = INVALID_SOCKET;
+  //! One listening socket per RFCOMM channel; each advertises its own SDP record.
+  struct ListeningService
+  {
+    SOCKET socket = INVALID_SOCKET;
+    SOCKADDR_BTH address{};
+    bool advertised = false;
+  };
+  QVector<ListeningService> services;
+
   SOCKET dataSocket = INVALID_SOCKET;
-  CSADDR_INFO serviceInfo{};
-  SOCKADDR_BTH serviceAddress{};
 
   bool running = false;
   bool connected = false;
-  bool published = false;
-  int publishedChannel = 0;
+  //! Set once a low RFCOMM channel was unavailable, to print the cleanup hint.
+  bool channelConflictSeen = false;
   QString peerLabel;
 
   // Set when ::send() reported WSAEWOULDBLOCK; readLoop() then keeps offering
@@ -149,6 +171,10 @@ public:
   QTimer *statusTimer = nullptr;
 
   bool publishService();
+  bool bindChannel(ULONG channel, ListeningService &service, int &errorCode);
+  bool advertiseService(ListeningService &service);
+  bool removeServiceRecord(const SOCKADDR_BTH &address, bool verbose);
+  void removeAllServiceRecords(bool verbose);
   void acceptLoop();
   void readLoop();
   void connectToServer();
@@ -168,10 +194,10 @@ BtRfcommWinLink::BtRfcommWinLink(QObject *parent) : IBtLink(parent), d(new Priva
       return;
     }
     if (d->mode == Mode::Server) {
-      // A disconnect tears down the listening socket (see cleanup()), so on
-      // retry we must rebuild it from scratch: re-create the socket, re-bind,
-      // re-listen and re-register the SDP record.  Calling acceptLoop() alone
-      // would return immediately because listenSocket is INVALID_SOCKET.
+      // A disconnect tears down the listening sockets (see cleanup()), so on
+      // retry we must rebuild them from scratch: re-create the sockets, re-bind,
+      // re-listen and re-register the SDP records.  Calling acceptLoop() alone
+      // would return immediately because the service list is empty.
       if (!d->publishService()) {
         LOG_ERR("bluetooth/rfcomm: re-publishService failed on retry");
         Q_EMIT errorOccurred(QStringLiteral("Could not re-open the Bluetooth serial port on this computer"));
@@ -196,29 +222,48 @@ BtRfcommWinLink::BtRfcommWinLink(QObject *parent) : IBtLink(parent), d(new Priva
   d->readTimer->setInterval(10);
   connect(d->readTimer, &QTimer::timeout, this, [this] { d->readLoop(); });
 
-  // While waiting for the other computer, repeat which channel is really bound.
-  // If that ever differs from the channel the SDP record advertises, the peer
-  // connects to a channel nobody listens on, which fails silently on its side.
+  // While waiting for the other computer, repeat which channels are really
+  // bound and which ones the SDP records advertise.  If a record advertises a
+  // different channel than the socket listening for it, the peer connects to a
+  // channel nobody listens on, which fails silently on its side.
   d->statusTimer = new QTimer(this);
   d->statusTimer->setInterval(10000);
   connect(d->statusTimer, &QTimer::timeout, this, [this] {
-    if (!d->running || d->connected || d->listenSocket == INVALID_SOCKET) {
+    if (!d->running || d->connected || d->services.isEmpty()) {
       return;
     }
 
-    SOCKADDR_BTH live{};
-    int length = sizeof(live);
-    int liveChannel = -1;
-    if (::getsockname(d->listenSocket, reinterpret_cast<SOCKADDR *>(&live), &length) != SOCKET_ERROR) {
-      liveChannel = static_cast<int>(live.port);
+    QStringList bound;
+    QStringList advertised;
+    QStringList mismatched;
+
+    for (const auto &service : d->services) {
+      SOCKADDR_BTH live{};
+      int length = sizeof(live);
+      int liveChannel = -1;
+      if (::getsockname(service.socket, reinterpret_cast<SOCKADDR *>(&live), &length) != SOCKET_ERROR) {
+        liveChannel = static_cast<int>(live.port);
+      }
+      bound << QString::number(liveChannel);
+      if (!service.advertised) {
+        continue;
+      }
+      const int advertisedChannel = static_cast<int>(service.address.port);
+      advertised << QString::number(advertisedChannel);
+      if (liveChannel > 0 && liveChannel != advertisedChannel) {
+        mismatched << QStringLiteral("%1 (advertised) != %2 (bound)")
+                          .arg(advertisedChannel)
+                          .arg(liveChannel);
+      }
     }
 
     LOG_INFO(
-        "bluetooth/rfcomm: still waiting for the paired computer (bound channel %d, advertised channel %d)%s",
-        liveChannel, d->publishedChannel,
-        (liveChannel > 0 && d->publishedChannel > 0 && liveChannel != d->publishedChannel)
-            ? " - MISMATCH: the SDP record points at another channel"
-            : ""
+        "bluetooth/rfcomm: still waiting for the paired computer (bound channel(s) %s, advertised channel(s) %s)%s",
+        qPrintable(bound.join(QLatin1Char(','))), qPrintable(advertised.join(QLatin1Char(','))),
+        mismatched.isEmpty()
+            ? ""
+            : qPrintable(QStringLiteral(" - MISMATCH: %1; the SDP record points at another channel")
+                              .arg(mismatched.join(QLatin1Char(';'))))
     );
   });
 }
@@ -243,60 +288,115 @@ BTH_ADDR BtRfcommWinLink::Private::parseAddress(const QString &text) const
   return ok ? static_cast<BTH_ADDR>(value) : 0;
 }
 
-bool BtRfcommWinLink::Private::publishService()
+bool BtRfcommWinLink::Private::bindChannel(ULONG channel, ListeningService &service, int &errorCode)
 {
-  LOG_INFO("bluetooth/rfcomm: creating RFCOMM socket (AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM)...");
   SOCKET socket = ::socket(AF_BTH, SOCK_STREAM, BTHPROTO_RFCOMM);
   if (socket == INVALID_SOCKET) {
-    const int err = WSAGetLastError();
-    LOG_ERR("bluetooth/rfcomm: cannot create an RFCOMM socket (error 0x%x - %d)", err, err);
+    errorCode = WSAGetLastError();
+    LOG_WARN("bluetooth/rfcomm: cannot create an RFCOMM socket (error 0x%x - %d)", errorCode, errorCode);
     return false;
   }
-  LOG_INFO("bluetooth/rfcomm: RFCOMM socket created successfully");
 
   SOCKADDR_BTH local{};
   local.addressFamily = AF_BTH;
   local.btAddr = 0; // any local adapter
-  local.port = BT_PORT_ANY;
+  local.port = channel;
 
-  LOG_INFO("bluetooth/rfcomm: binding RFCOMM socket to local AF_BTH (BT_PORT_ANY)...");
   if (::bind(socket, reinterpret_cast<SOCKADDR *>(&local), sizeof(local)) == SOCKET_ERROR) {
-    const int err = WSAGetLastError();
-    LOG_ERR("bluetooth/rfcomm: bind failed (error 0x%x - %d)", err, err);
+    errorCode = WSAGetLastError();
     ::closesocket(socket);
     return false;
   }
-  LOG_INFO("bluetooth/rfcomm: RFCOMM socket bind succeeded");
 
-  // Ask the Bluetooth stack to accept incoming RFCOMM connections.
-  LOG_INFO("bluetooth/rfcomm: listening with backlog %d...", kListenBacklog);
   if (::listen(socket, kListenBacklog) == SOCKET_ERROR) {
-    const int err = WSAGetLastError();
-    LOG_ERR("bluetooth/rfcomm: listen failed (error 0x%x - %d)", err, err);
+    errorCode = WSAGetLastError();
     ::closesocket(socket);
     return false;
   }
-  LOG_INFO("bluetooth/rfcomm: RFCOMM listen succeeded");
-  listenSocket = socket;
 
-  // Publish the service so the peer's SDP query finds it.
   SOCKADDR_BTH bound{};
   int length = sizeof(bound);
   if (::getsockname(socket, reinterpret_cast<SOCKADDR *>(&bound), &length) == SOCKET_ERROR) {
-    const int err = WSAGetLastError();
-    LOG_WARN("bluetooth/rfcomm: getsockname failed (error 0x%x - %d)", err, err);
-  } else {
-    LOG_INFO("bluetooth/rfcomm: assigned RFCOMM channel is %d", static_cast<int>(bound.port));
+    errorCode = WSAGetLastError();
+    ::closesocket(socket);
+    return false;
   }
 
+  u_long nonBlocking = 1;
+  ::ioctlsocket(socket, FIONBIO, &nonBlocking);
+
+  service.socket = socket;
+  service.address = bound;
+  service.advertised = false;
+  LOG_INFO(
+      "bluetooth/rfcomm: listening on RFCOMM channel %d (requested %lu)", static_cast<int>(bound.port), channel
+  );
+  return true;
+}
+
+bool BtRfcommWinLink::Private::removeServiceRecord(const SOCKADDR_BTH &address, bool verbose)
+{
+  SOCKADDR_BTH target = address;
   CSADDR_INFO info{};
-  info.LocalAddr.iSockaddrLength = sizeof(bound);
-  info.LocalAddr.lpSockaddr = reinterpret_cast<SOCKADDR *>(&bound);
-  info.RemoteAddr.iSockaddrLength = sizeof(bound);
-  info.RemoteAddr.lpSockaddr = reinterpret_cast<SOCKADDR *>(&bound);
+  info.LocalAddr.iSockaddrLength = sizeof(target);
+  info.LocalAddr.lpSockaddr = reinterpret_cast<SOCKADDR *>(&target);
+  info.RemoteAddr.iSockaddrLength = sizeof(target);
+  info.RemoteAddr.lpSockaddr = reinterpret_cast<SOCKADDR *>(&target);
   info.iSocketType = SOCK_STREAM;
   info.iProtocol = BTHPROTO_RFCOMM;
-  serviceInfo = info;
+
+  // RNRSERVICE_DELETE indexes the record by the address tuple it was
+  // registered with (protocol and port, see "Bluetooth and WSAQUERYSET for
+  // Set Service"), so these members must match the registration call.  A query
+  // carrying only the service GUID is rejected with WSAEINVAL (10022).
+  // A record published by another process cannot be removed here at all; it
+  // disappears when that process exits.
+  WSAQUERYSET query{};
+  query.dwSize = sizeof(query);
+  query.dwNameSpace = NS_BTH;
+  query.lpServiceClassId = const_cast<GUID *>(&kServiceGuid);
+  query.lpszServiceInstanceName = const_cast<LPWSTR>(L"Deskflow");
+  query.lpszComment = const_cast<LPWSTR>(L"Deskflow keyboard and mouse sharing");
+  query.dwNumberOfCsAddrs = 1;
+  query.lpcsaBuffer = &info;
+
+  if (::WSASetService(&query, RNRSERVICE_DELETE, 0) == SOCKET_ERROR) {
+    const int err = WSAGetLastError();
+    if (verbose) {
+      LOG_WARN(
+          "bluetooth/rfcomm: could not remove the Deskflow SDP record for RFCOMM channel %d (error 0x%x - %d)",
+          static_cast<int>(address.port), err, err
+      );
+    } else {
+      LOG_DEBUG(
+          "bluetooth/rfcomm: no SDP record for RFCOMM channel %d is registered by this process (error 0x%x - %d)",
+          static_cast<int>(address.port), err, err
+      );
+    }
+    return false;
+  }
+  LOG_INFO("bluetooth/rfcomm: removed the Deskflow SDP record for RFCOMM channel %d", static_cast<int>(address.port));
+  return true;
+}
+
+void BtRfcommWinLink::Private::removeAllServiceRecords(bool verbose)
+{
+  for (const auto &service : services) {
+    if (service.advertised) {
+      removeServiceRecord(service.address, verbose);
+    }
+  }
+}
+
+bool BtRfcommWinLink::Private::advertiseService(ListeningService &service)
+{
+  CSADDR_INFO info{};
+  info.LocalAddr.iSockaddrLength = sizeof(service.address);
+  info.LocalAddr.lpSockaddr = reinterpret_cast<SOCKADDR *>(&service.address);
+  info.RemoteAddr.iSockaddrLength = sizeof(service.address);
+  info.RemoteAddr.lpSockaddr = reinterpret_cast<SOCKADDR *>(&service.address);
+  info.iSocketType = SOCK_STREAM;
+  info.iProtocol = BTHPROTO_RFCOMM;
 
   // Description and service name shown to the other computer.
   WSAQUERYSET query{};
@@ -306,45 +406,82 @@ bool BtRfcommWinLink::Private::publishService()
   query.lpszComment = const_cast<LPWSTR>(L"Deskflow keyboard and mouse sharing");
   query.lpServiceClassId = const_cast<GUID *>(&kServiceGuid);
   query.dwNumberOfCsAddrs = 1;
-  query.lpcsaBuffer = &serviceInfo;
+  query.lpcsaBuffer = &info;
 
-  // A record left behind by an earlier run keeps its old channel and shadows the
-  // live socket, so clear it before publishing the new one.  The delete query
-  // needs the service instance name, otherwise the stack refuses to remove it.
-  WSAQUERYSET stale{};
-  stale.dwNameSpace = NS_BTH;
-  stale.dwSize = sizeof(stale);
-  stale.lpszServiceInstanceName = const_cast<LPWSTR>(L"Deskflow");
-  stale.lpServiceClassId = const_cast<GUID *>(&kServiceGuid);
-  if (::WSASetService(&stale, RNRSERVICE_DELETE, 0) != SOCKET_ERROR) {
-    LOG_INFO("bluetooth/rfcomm: removed a previously registered Deskflow SDP record");
-  } else {
+  // The same address tuple may only be registered once, so release a record
+  // this process left on this channel before publishing again.
+  removeServiceRecord(service.address, false);
+
+  if (::WSASetService(&query, RNRSERVICE_REGISTER, 0) == SOCKET_ERROR) {
     const int err = WSAGetLastError();
     LOG_WARN(
-        "bluetooth/rfcomm: could not remove a previously registered Deskflow SDP record (error 0x%x - %d); the peer may keep discovering the stale channel",
-        err, err
+        "bluetooth/rfcomm: WSASetService could not register RFCOMM channel %d (error 0x%x - %d). The socket still "
+        "listens, but the peer will not discover this channel through SDP.",
+        static_cast<int>(service.address.port), err, err
+    );
+    return false;
+  }
+
+  service.advertised = true;
+  LOG_INFO(
+      "bluetooth/rfcomm: SDP service successfully registered for Deskflow (GUID "
+      "{3f2a7c1e-9b64-4d58-8a11-6c0d5e7b9f20}) on RFCOMM channel %d",
+      static_cast<int>(service.address.port)
+  );
+  return true;
+}
+
+bool BtRfcommWinLink::Private::publishService()
+{
+  services.clear();
+  channelConflictSeen = false;
+
+  // A record left behind by an earlier run keeps advertising its old channel
+  // and cannot be deleted from here (see removeServiceRecord), so listen on the
+  // low channels as well: the stale record then still reaches a live socket.
+  for (const ULONG channel : kPreferredChannels) {
+    ListeningService service;
+    int err = 0;
+    if (!bindChannel(channel, service, err)) {
+      // WSAEADDRINUSE means another local service holds the channel: a Windows
+      // Bluetooth profile, or a Deskflow instance that is still running.
+      channelConflictSeen = true;
+      LOG_INFO("bluetooth/rfcomm: RFCOMM channel %lu is not available (error 0x%x - %d)", channel, err, err);
+      continue;
+    }
+    services.append(service);
+  }
+
+  if (services.isEmpty()) {
+    // No low channel is free; let the stack pick one.
+    ListeningService service;
+    int err = 0;
+    if (!bindChannel(BT_PORT_ANY, service, err)) {
+      LOG_ERR("bluetooth/rfcomm: cannot bind an RFCOMM listening socket (error 0x%x - %d)", err, err);
+      return false;
+    }
+    services.append(service);
+  }
+
+  if (channelConflictSeen) {
+    LOG_INFO(
+        "bluetooth/rfcomm: a low RFCOMM channel was already in use; if the peer keeps discovering a channel "
+        "Deskflow no longer listens on, close a leftover deskflow-core.exe (tasklist | findstr deskflow) or restart "
+        "the Bluetooth Support Service (net stop bthserv && net start bthserv)."
     );
   }
 
-  LOG_INFO("bluetooth/rfcomm: registering Deskflow service via WSASetService (SDP)...");
-  if (::WSASetService(&query, RNRSERVICE_REGISTER, 0) == SOCKET_ERROR) {
-    const int err = WSAGetLastError();
-    LOG_WARN("bluetooth/rfcomm: WSASetService failed (error 0x%x - %d). The socket will listen on channel %d, but SDP clients may not discover it automatically.",
-             err, err, static_cast<int>(bound.port));
-    // Not fatal: the socket still listens, the peer just will not see it in SDP.
-  } else {
-    published = true;
-    publishedChannel = static_cast<int>(bound.port);
-    LOG_INFO("bluetooth/rfcomm: SDP service successfully registered for Deskflow (GUID {3f2a7c1e-9b64-4d58-8a11-6c0d5e7b9f20}) on RFCOMM channel %d",
-             static_cast<int>(bound.port));
+  int advertisedCount = 0;
+  for (auto &service : services) {
+    if (advertiseService(service)) {
+      ++advertisedCount;
+    }
   }
-
-  u_long nonBlocking = 1;
-  ::ioctlsocket(listenSocket, FIONBIO, &nonBlocking);
   LOG_INFO(
-      "bluetooth/rfcomm: listening on RFCOMM channel %d, waiting for incoming connection from paired computer",
-      static_cast<int>(bound.port)
+      "bluetooth/rfcomm: %d of %d listening RFCOMM channel(s) are advertised over SDP, waiting for the paired computer",
+      advertisedCount, static_cast<int>(services.size())
   );
+
   if (statusTimer != nullptr) {
     statusTimer->start();
   }
@@ -353,40 +490,43 @@ bool BtRfcommWinLink::Private::publishService()
 
 void BtRfcommWinLink::Private::acceptLoop()
 {
-  if (!running || connected || listenSocket == INVALID_SOCKET) {
+  if (!running || connected || services.isEmpty()) {
     return;
   }
 
-  SOCKADDR_BTH clientAddr{};
-  int clientAddrLen = sizeof(clientAddr);
-  SOCKET client = ::accept(listenSocket, reinterpret_cast<SOCKADDR *>(&clientAddr), &clientAddrLen);
-  if (client == INVALID_SOCKET) {
-    const int err = WSAGetLastError();
-    if (err != WSAEWOULDBLOCK) {
-      LOG_WARN("bluetooth/rfcomm: accept error (0x%x - %d)", err, err);
+  for (const auto &service : services) {
+    SOCKADDR_BTH clientAddr{};
+    int clientAddrLen = sizeof(clientAddr);
+    SOCKET client = ::accept(service.socket, reinterpret_cast<SOCKADDR *>(&clientAddr), &clientAddrLen);
+    if (client == INVALID_SOCKET) {
+      const int err = WSAGetLastError();
+      if (err != WSAEWOULDBLOCK) {
+        LOG_WARN("bluetooth/rfcomm: accept error on channel %d (0x%x - %d)", static_cast<int>(service.address.port), err, err);
+      }
+      continue;
     }
+
+    const BTH_ADDR addr = clientAddr.btAddr;
+    LOG_INFO(
+        "bluetooth/rfcomm: accepted connection from Bluetooth peer %02llx:%02llx:%02llx:%02llx:%02llx:%02llx on "
+        "channel %d",
+        (addr >> 40) & 0xff, (addr >> 32) & 0xff, (addr >> 24) & 0xff, (addr >> 16) & 0xff, (addr >> 8) & 0xff,
+        addr & 0xff, static_cast<int>(clientAddr.port)
+    );
+
+    u_long nonBlocking = 1;
+    ::ioctlsocket(client, FIONBIO, &nonBlocking);
+
+    dataSocket = client;
+    if (acceptTimer != nullptr) {
+      acceptTimer->stop();
+    }
+    if (statusTimer != nullptr) {
+      statusTimer->stop();
+    }
+    markConnected();
     return;
   }
-
-  const BTH_ADDR addr = clientAddr.btAddr;
-  LOG_INFO(
-      "bluetooth/rfcomm: accepted connection from Bluetooth peer %02llx:%02llx:%02llx:%02llx:%02llx:%02llx on channel %d",
-      (addr >> 40) & 0xff, (addr >> 32) & 0xff, (addr >> 24) & 0xff,
-      (addr >> 16) & 0xff, (addr >> 8) & 0xff, addr & 0xff,
-      static_cast<int>(clientAddr.port)
-  );
-
-  u_long nonBlocking = 1;
-  ::ioctlsocket(client, FIONBIO, &nonBlocking);
-
-  dataSocket = client;
-  if (acceptTimer != nullptr) {
-    acceptTimer->stop();
-  }
-  if (statusTimer != nullptr) {
-    statusTimer->stop();
-  }
-  markConnected();
 }
 
 void BtRfcommWinLink::Private::readLoop()
@@ -528,19 +668,15 @@ void BtRfcommWinLink::Private::cleanup()
     ::closesocket(dataSocket);
     dataSocket = INVALID_SOCKET;
   }
-  if (listenSocket != INVALID_SOCKET) {
-    LOG_INFO("bluetooth/rfcomm: closing listen socket");
-    ::closesocket(listenSocket);
-    listenSocket = INVALID_SOCKET;
+  // Unregister before closing the sockets: the record is indexed by the address
+  // the socket was bound to.  A failure here is harmless - Windows drops the
+  // records of a process when it exits - so it is logged at debug level.
+  removeAllServiceRecords(false);
+  for (const auto &service : services) {
+    LOG_INFO("bluetooth/rfcomm: closing listen socket on RFCOMM channel %d", static_cast<int>(service.address.port));
+    ::closesocket(service.socket);
   }
-  if (published) {
-    LOG_INFO("bluetooth/rfcomm: unregistering SDP service");
-    WSAQUERYSET query{};
-    query.dwNameSpace = NS_BTH;
-    query.lpServiceClassId = const_cast<GUID *>(&kServiceGuid);
-    ::WSASetService(&query, RNRSERVICE_DELETE, 0);
-    published = false;
-  }
+  services.clear();
 }
 
 void BtRfcommWinLink::startServer(const Config &config)

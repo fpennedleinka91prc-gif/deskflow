@@ -53,6 +53,8 @@ public:
   void handleChannelOpenStatus(int status, void *channel);
 
   void handleSdpQueryComplete(int status);
+  //! Called by the delegate when the peer sends the first bytes on a channel.
+  void handlePeerData();
   //! Called by the delegate when the peer closes the data channel.
   void handleChannelClosed();
 #endif
