@@ -51,6 +51,8 @@ public:
 #ifdef __APPLE__
   //! Called by the Objective-C RFCOMM delegate; \c channel is an opaque \c IOBluetoothRFCOMMChannel.
   void handleChannelOpenStatus(int status, void *channel);
+
+  void handleSdpQueryComplete(int status);
   //! Called by the delegate when the peer closes the data channel.
   void handleChannelClosed();
 #endif

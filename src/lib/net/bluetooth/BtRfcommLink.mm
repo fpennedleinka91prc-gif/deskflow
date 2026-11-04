@@ -95,6 +95,14 @@ name brought in by the using-declaration above.
 
 @implementation DeskflowRfcommDelegate
 
+- (void)sdpQueryComplete:(IOBluetoothDevice *)device status:(IOReturn)status
+{
+  (void)device;
+  if (self.owner != nullptr) {
+    static_cast<BtRfcommLink *>(self.owner)->handleSdpQueryComplete(static_cast<int>(status));
+  }
+}
+
 - (void)rfcommChannelOpenComplete:(IOBluetoothRFCOMMChannel *)channel status:(IOReturn)error
 {
   if (self.owner != nullptr) {
@@ -145,6 +153,10 @@ public:
   bool connected = false;
   bool connecting = false;
   int sdpAttempt = 0;
+  //! Set from the SDP completion callback; the cache is stale until it fires.
+  bool sdpQueryFinished = false;
+  //! True between openRFCOMMChannelAsync and its completion callback.
+  bool channelOpening = false;
   QString peerLabel;
 
   //! Last IOReturn a write was rejected with; a repeated value is logged once.
@@ -358,6 +370,25 @@ void BtRfcommLink::handleChannelOpenStatus(int status, void *openedChannel)
   d->onChannelOpenFinished(status, openedChannel);
 }
 
+void BtRfcommLink::handleSdpQueryComplete(int status)
+{
+  LOG_DEBUG("bluetooth/rfcomm: the SDP query finished (0x%x)", static_cast<unsigned>(status));
+  QTimer::singleShot(0, this, [this, status] {
+    d->sdpQueryFinished = status == kIOReturnSuccess;
+    @autoreleasepool {
+      if (d->device != nil) {
+        LOG_DEBUG(
+            "bluetooth/rfcomm: SDP cache updated at %s", [[[d->device getLastServicesUpdate] description] UTF8String]
+        );
+      }
+    }
+    if (!d->running || d->connected || !d->connecting) {
+      return;
+    }
+    d->discoverAndOpen();
+  });
+}
+
 void BtRfcommLink::handleChannelClosed()
 {
   if (!d->running || !d->connected) {
@@ -368,6 +399,7 @@ void BtRfcommLink::handleChannelClosed()
   // `connected` set would make connectPeer() return early forever.
   d->connected = false;
   d->connecting = false;
+  d->channelOpening = false;
   d->channel = nil;
   d->device = nil;
   LOG_INFO("bluetooth/rfcomm: the data channel closed");
@@ -416,23 +448,48 @@ IOBluetoothSDPServiceRecord *BtRfcommLink::Private::findDeskflowRecord()
   }
 
   @autoreleasepool {
-    // Match on the service class UUID Windows publishes.  Taking "the first
-    // record that has an RFCOMM channel" picks one of the computer's own
-    // services (audio, HID, ...) and fails on a channel that is not ours.
-    IOBluetoothSDPUUID *uuid =
-        [IOBluetoothSDPUUID uuidWithBytes:kDeskflowServiceUuidBytes length:sizeof(kDeskflowServiceUuidBytes)];
-    IOBluetoothSDPServiceRecord *record = [device getServiceRecordForUUID:uuid];
-    if (record != nil) {
-      return record;
-    }
+    // Windows keeps the SDP entries of earlier runs, so the device can publish
+    // more than one Deskflow record: a stale one (channel 1) and the live one
+    // (channel 3).  Opening the stale record succeeds against the computer's own
+    // serial service and silently black-holes the traffic, so pick the newest
+    // record - the SDP server hands out increasing handles.
+    IOBluetoothSDPServiceRecord *newest = nil;
+    BluetoothSDPServiceRecordHandle newestHandle = 0;
+    int matches = 0;
 
-    // A record published by an older build may carry only the service name.
     for (IOBluetoothSDPServiceRecord *candidate in [device services]) {
-      if ([[candidate getServiceName] isEqualToString:@"Deskflow"]) {
-        return candidate;
+      BluetoothSDPServiceRecordHandle candidateHandle = 0;
+      BluetoothRFCOMMChannelID candidateChannel = 0;
+      [candidate getServiceRecordHandle:&candidateHandle];
+      [candidate getRFCOMMChannelID:&candidateChannel];
+      NSString *candidateName = [candidate getServiceName];
+      LOG_DEBUG(
+          "bluetooth/rfcomm: SDP service \"%s\" handle=%u rfcomm=%d", candidateName != nil ? [candidateName UTF8String] : "",
+          static_cast<unsigned>(candidateHandle), static_cast<int>(candidateChannel)
+      );
+      if (![candidateName isEqualToString:@"Deskflow"]) {
+        continue;
+      }
+      const IOReturn rc = [candidate getServiceRecordHandle:&candidateHandle];
+      ++matches;
+      LOG_DEBUG(
+          "bluetooth/rfcomm: Deskflow SDP record %d: handle=%u channel=%d (0x%x)", matches,
+          static_cast<unsigned>(candidateHandle), static_cast<int>(candidateChannel), static_cast<unsigned>(rc)
+      );
+      if (newest == nil || (rc == kIOReturnSuccess && candidateHandle >= newestHandle)) {
+        newest = candidate;
+        newestHandle = candidateHandle;
       }
     }
-    return nil;
+
+    if (newest != nil) {
+      return newest;
+    }
+
+    // A record published by an older build may carry no name.
+    IOBluetoothSDPUUID *uuid =
+        [IOBluetoothSDPUUID uuidWithBytes:kDeskflowServiceUuidBytes length:sizeof(kDeskflowServiceUuidBytes)];
+    return [device getServiceRecordForUUID:uuid];
   }
 }
 
@@ -462,6 +519,8 @@ void BtRfcommLink::Private::connectPeer()
 
   connecting = true;
   sdpAttempt = 0;
+  sdpQueryFinished = false;
+  channelOpening = false;
 
   @autoreleasepool {
     if (![device isConnected]) {
@@ -486,15 +545,31 @@ void BtRfcommLink::Private::connectPeer()
 
 void BtRfcommLink::Private::discoverAndOpen()
 {
-  if (!running || connected || device == nil) {
+  if (!running || connected || device == nil || channelOpening) {
     return;
   }
 
   @autoreleasepool {
+    if (delegate == nil) {
+      delegate = [[DeskflowRfcommDelegate alloc] init];
+      delegate.owner = q;
+    }
+
     if (sdpAttempt == 0) {
-      // Starts the exchange; the records land in the cache asynchronously, so the
-      // lookups below are repeated on a timer rather than back to back.
-      [device performSDPQuery:nil];
+      // The SDP cache still holds the records of the previous run, which is how a
+      // stale channel gets picked (Windows advertised channel 3 while the cache
+      // said 1). Query again and wait for the callback before trusting the cache.
+      sdpQueryFinished = false;
+      [device performSDPQuery:(id)delegate];
+    }
+
+    if (!sdpQueryFinished && ++sdpAttempt < kSdpAttempts) {
+      LOG_DEBUG("bluetooth/rfcomm: waiting for the SDP query to finish (attempt %d)", sdpAttempt);
+      QTimer::singleShot(kSdpRetryMs, q, [this] { discoverAndOpen(); });
+      return;
+    }
+    if (!sdpQueryFinished) {
+      LOG_WARN("bluetooth/rfcomm: the SDP query did not finish, falling back to the cached records");
     }
 
     IOBluetoothSDPServiceRecord *record = findDeskflowRecord();
@@ -534,6 +609,7 @@ void BtRfcommLink::Private::openChannel(BluetoothRFCOMMChannelID channelId)
     return;
   }
 
+  channelOpening = true;
   @autoreleasepool {
     if (delegate == nil) {
       delegate = [[DeskflowRfcommDelegate alloc] init];
@@ -559,6 +635,7 @@ void BtRfcommLink::Private::openChannel(BluetoothRFCOMMChannelID channelId)
 
 void BtRfcommLink::Private::onChannelOpenFinished(int status, void *openedChannel)
 {
+  channelOpening = false;
   if (openTimer != nullptr) {
     openTimer->stop();
   }

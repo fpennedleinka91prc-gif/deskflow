@@ -47,6 +47,7 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
+#include <QTimer>
 #include <QScreen>
 #include <QScrollBar>
 
@@ -750,7 +751,9 @@ void MainWindow::open()
   }
 
   if (Settings::value(Settings::Gui::AutoStartCore).toBool()) {
-    if (ui->rbModeClient->isChecked() && ui->lineHostname->text().isEmpty())
+    // With the Bluetooth transport the client gets its peer from the link, so an
+    // empty hostname field must not block the core from starting.
+    if (!canRunCore())
       return;
     startCore();
   }

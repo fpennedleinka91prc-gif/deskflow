@@ -309,13 +309,21 @@ bool BtRfcommWinLink::Private::publishService()
   query.lpcsaBuffer = &serviceInfo;
 
   // A record left behind by an earlier run keeps its old channel and shadows the
-  // live socket, so clear it before publishing the new one.
+  // live socket, so clear it before publishing the new one.  The delete query
+  // needs the service instance name, otherwise the stack refuses to remove it.
   WSAQUERYSET stale{};
   stale.dwNameSpace = NS_BTH;
   stale.dwSize = sizeof(stale);
+  stale.lpszServiceInstanceName = const_cast<LPWSTR>(L"Deskflow");
   stale.lpServiceClassId = const_cast<GUID *>(&kServiceGuid);
   if (::WSASetService(&stale, RNRSERVICE_DELETE, 0) != SOCKET_ERROR) {
     LOG_INFO("bluetooth/rfcomm: removed a previously registered Deskflow SDP record");
+  } else {
+    const int err = WSAGetLastError();
+    LOG_WARN(
+        "bluetooth/rfcomm: could not remove a previously registered Deskflow SDP record (error 0x%x - %d); the peer may keep discovering the stale channel",
+        err, err
+    );
   }
 
   LOG_INFO("bluetooth/rfcomm: registering Deskflow service via WSASetService (SDP)...");
